@@ -45,6 +45,18 @@ h1, h2, h3 {{ color: {BRAND['ink']}; }}
 .mv-ok {{ border-left:4px solid {BRAND['green']}; }} .mv-fallo {{ border-left:4px solid {BRAND['red']}; }}
 .mv-omitida {{ border-left:4px solid {BRAND['muted']}; }} .mv-pendiente {{ border-left:4px solid rgba(157,176,200,.4); }}
 .mv-etapa small {{ color:{BRAND['muted']}; }}
+/* Texto claro en todo lo que Streamlit pinta con su propio color: pestañas,
+   etiquetas de widgets, captions, expanders. El tema oscuro de
+   .streamlit/config.toml hace el grueso; esto cubre lo que el tema deja gris. */
+[data-testid="stTabs"] button p, [data-testid="stTabs"] button {{ color:{BRAND['ink']} !important; font-weight:600; }}
+[data-testid="stTabs"] button[aria-selected="true"] p {{ color:{BRAND['amber']} !important; }}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p, .stCaption {{ color:{BRAND['muted']} !important; }}
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label, label[data-testid="stWidgetLabel"] {{ color:{BRAND['ink']} !important; }}
+[data-testid="stRadio"] label p, [data-testid="stRadio"] label span, [data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] span {{ color:{BRAND['ink']} !important; }}
+[data-testid="stExpander"] summary p, [data-testid="stExpander"] summary span {{ color:{BRAND['ink']} !important; }}
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li {{ color:{BRAND['ink']}; }}
+.stApp a {{ color:#8fc1ff; }}
 </style>""", unsafe_allow_html=True)
 
 ICONO = {"ok": "✅", "fallo": "❌", "omitida": "⏭️", "pendiente": "⬜"}

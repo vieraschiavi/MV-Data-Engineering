@@ -1,0 +1,25 @@
+# © 2026 Martín Viera. Todos los derechos reservados.
+#
+# Tema oscuro REAL de Streamlit. Sin este archivo, el fondo navy que pinta
+# app/app.py por CSS convive con el tema CLARO por defecto, que colorea
+# párrafos, etiquetas de radio/selectbox, pestañas, expanders y captions con
+# su texto casi negro: texto oscuro sobre fondo oscuro en toda la barra
+# lateral y en las pestañas. Con el tema declarado acá, Streamlit genera sus
+# propios estilos coherentes con el fondo (mismo arreglo que MV Data
+# Governance y MV DAX Lab).
+[theme]
+base = "dark"
+primaryColor = "#f2b441"
+backgroundColor = "#081527"
+secondaryBackgroundColor = "#0c2137"
+textColor = "#eaf1fb"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+headless = true
+maxUploadSize = 2000
