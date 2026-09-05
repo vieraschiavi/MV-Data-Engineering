@@ -136,6 +136,10 @@ def transformar(nombre: str, df: pd.DataFrame, cfg: dict | None) -> tuple[pd.Dat
         d = cfg["despivotear"]
         out = despivotear_grupos(out, d) if "grupos" in d else despivotear(out, d)
         notas.append(f"despivoteo → {len(out)} filas")
+        # Las columnas que nacen en el despivoteo (el período) también pueden ser fechas.
+        for col in cfg.get("fechas") or []:
+            if col in out.columns and not pd.api.types.is_datetime64_any_dtype(out[col]):
+                out[col] = pd.to_datetime(out[col], errors="coerce")
     for col, expr in (cfg.get("derivar") or {}).items():
         try:
             out[col] = out.eval(expr, engine="python")

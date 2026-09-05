@@ -47,6 +47,7 @@ def _leer_archivo(ruta: str, tipo: str, fuente: dict) -> pd.DataFrame:
     if tipo == "csv":
         op.setdefault("sep", None)
         op.setdefault("engine", "python")
+        op.setdefault("encoding", "utf-8-sig")     # el BOM de Excel no se vuelve parte del primer encabezado
         return pd.read_csv(ruta, **op, **storage)
     if tipo == "excel":
         return pd.read_excel(ruta, sheet_name=fuente.get("hoja", 0), **op, **storage)

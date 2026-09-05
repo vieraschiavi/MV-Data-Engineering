@@ -22,11 +22,18 @@ falla, las siguientes no corren y la evidencia dice por qué.
 | Gold | dimensiones SCD 1/2 con claves surrogadas, calendario automático, hechos con joins validados | `gold/*.parquet` |
 | Almacén | DuckDB con esquema `gold` + vistas SQL del YAML; publicación opcional a SQL Server/PostgreSQL | `warehouse.duckdb` |
 | Gobernanza | catálogo, diccionario, linaje fuente→KPI, PII, puntajes por dimensión | `gobernanza.json`, `catalogo.csv` |
-| ML | clasificación/regresión (sklearn) con corte temporal, chequeo de fuga, importancias, scores a gold | `ml.json`, `ml_scores` |
+| ML | AutoML honesto: tres modelos, corte 60/20/20 (el número sale del holdout, con la brecha selección→holdout), chequeo de fuga, scoring de un segundo conjunto (backtest a ciegas) y salida de cartera al estilo MV Kobra AI: probpago, decil, segmento, estrategia, valor esperado, prioridad | `ml.json`, `ml_scores`, `cartera_priorizada.xlsx` |
 | Reporte | KPIs (agregación, ratio, SQL), gráficos, Excel corporativo y HTML autocontenido | `reporte.xlsx`, `reporte.html` |
 | DAX | medidas generadas: DIVIDE, KEEPFILTERS, REMOVEFILTERS, DATEADD | `measures.dax` |
 | Power BI | `.pbit` + PBIP con modelo, relaciones, medidas y tablero, auditado (MV DAX Lab) | `<nombre>.pbit`, `_demo.pbit` |
-| Entrega | manifiesto, resumen ejecutivo y copia de lo entregable | `entrega/` |
+| Entrega | manifiesto, resumen ejecutivo, **justificación etapa por etapa para técnicos y gerencia** (ES + EN) y copia de lo entregable | `entrega/` |
+
+## En la app
+
+- **Fuentes:** subís archivos (CSV, Excel, Parquet, JSON) o declarás una conexión SQL de sólo lectura (SQL Server, PostgreSQL, MySQL, SQLite, DuckDB); la contraseña se lee de una variable de entorno, nunca va al YAML.
+- **IA:** elegís proveedor (Claude, OpenAI, Gemini, Copilot/Azure, Groq, Mistral, DeepSeek, Ollama local) y modelo con tu propia clave, actualizás la lista de modelos desde la API del proveedor y preguntás en lenguaje natural: la IA propone una consulta, el motor la ejecuta en el almacén (sólo lectura) y la IA interpreta el resultado. Sin clave, el modo local responde con los KPIs, la calidad y el modelo.
+- **Justificación:** para cada etapa, qué se hizo con los números de la corrida, la lectura técnica y la lectura gerencial. Se descarga en Markdown.
+- **Demos:** `cobranzas` (financiera sintética), `ventas` (consumo masivo, tres formatos de origen) y `kash` (backtest a ciegas de una financiera: train con 12 meses de pagos y ventana futura + score de la misma fecha, esquema real con `;` y BOM, datos 100 % sintéticos calibrados con estadísticas agregadas).
 
 ## Correr
 
@@ -35,10 +42,11 @@ falla, las siguientes no corren y la evidencia dice por qué.
 MV_DataEngineering.bat                     # Windows, doble clic
 python -m mvde demo cobranzas ./demo --correr     # demo financiera, 12 etapas en ~10 s
 python -m mvde demo ventas ./demo2 --correr       # demo consumo masivo (Excel + CSV ; + Parquet)
+python -m mvde demo kash ./demo3 --correr         # backtest a ciegas: train + score, ProbPago y cartera priorizada
 python -m mvde nuevo mis_datos.csv         # YAML de arranque desde cualquier archivo
 python -m mvde correr proyecto.yaml --desde gold   # reanudar desde una etapa
 python -m mvde automatizar proyecto.yaml   # .bat (Programador de tareas), cron, DAG de Airflow
-python -m pytest -q tests                  # 19 tests
+python -m pytest -q tests                  # 26 tests
 ```
 
 ## El YAML, en una pantalla
@@ -62,7 +70,8 @@ kpis:
   - {nombre: Monto cobrado, tabla: fact_cuota, columna: monto_pagado, agregacion: sum, por: canal}
   - {nombre: "% Cobrado", tipo: ratio, numerador: {tabla: fact_cuota, columna: monto_pagado, agregacion: sum},
      denominador: {tabla: fact_cuota, columna: monto_cuota, agregacion: sum}, formato: "0.0%"}
-ml: {sql: "SELECT ... FROM gold.fact_cliente_riesgo ...", target: default_proximo_mes}
+ml: {tabla: fact_cliente_train, tabla_score: fact_cliente_score, target: pago_val, id: dim_cliente_key,
+     excluir: [NMesesConPago_VAL], cobranzas: {monto: monto_ref, dias_mora: DiasAtraso_Actual}}
 powerbi: {generar: true, nombre: Cobranzas}
 ```
 
@@ -73,10 +82,10 @@ sintéticos con defectos inyectados a propósito para que el gate tenga algo que
 
 ```
 mv-data-engineering/
-├── mvde/            motor: proyecto · fuentes · bronze · silver · calidad · gold · almacen ·
-│                    gobernanza · ml · reporte · dax · powerbi · orquestador · automatizacion · demos · cli · i18n
+├── mvde/            motor: proyecto · fuentes · bronze · silver · calidad · gold · almacen · gobernanza ·
+│                    ml · reporte · dax · powerbi · ia · justificacion · orquestador · automatizacion · demos · cli · i18n
 ├── app/app.py       programa Streamlit (ES/EN/PT), misma familia visual que MV Data Governance
-├── tests/           19 tests: motor, i18n, demos end-to-end, gate, reanudación, CLI
+├── tests/           26 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación
 ├── run.sh · MV_DataEngineering.bat · requirements.txt · CLAUDE.md
 ```
 

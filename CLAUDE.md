@@ -7,7 +7,7 @@ Motor en `mvde/` (importable sin Streamlit), app en `app/app.py`, CLI `python -m
 | Acción | Comando |
 |---|---|
 | App | `./run.sh` (Linux/macOS) · `MV_DataEngineering.bat` (Windows) · `streamlit run app/app.py` |
-| Demo end-to-end | `python -m mvde demo cobranzas ./demo_mvde --correr` (o `ventas`) |
+| Demo end-to-end | `python -m mvde demo cobranzas ./demo_mvde --correr` (o `ventas`, `kash`) |
 | Correr un proyecto | `python -m mvde correr proyecto.yaml [--desde gold] [--hasta reporte]` |
 | Una etapa | `python -m mvde etapa proyecto.yaml calidad` |
 | Nuevo proyecto desde un archivo | `python -m mvde nuevo datos.csv` |
@@ -20,4 +20,5 @@ Motor en `mvde/` (importable sin Streamlit), app en `app/app.py`, CLI `python -m
 - Toda decisión vive en el YAML del proyecto (`proyecto.py` lo valida). Nada de rutas ni reglas hardcodeadas en el motor.
 - Texto de cara al usuario en `mvde/i18n.py`, con las tres claves ES/EN/PT (test de paridad).
 - Fuentes SQL sólo lectura; credenciales por URL/variables de entorno, nunca en el YAML versionado.
-- Las demos son 100 % sintéticas con semilla fija y defectos inyectados a propósito.
+- Las demos son 100 % sintéticas con semilla fija y defectos inyectados a propósito. La demo `kash` replica el ESQUEMA de un backtest real (calibrado con estadísticas agregadas); ninguna fila real entra al repo.
+- IA (`ia.py`): opcional y aditiva, claves sólo en sesión/entorno; el SQL que propone la IA se ejecuta sólo si es SELECT/WITH.

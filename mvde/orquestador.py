@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import ETAPAS, __version__
-from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, ml, powerbi, proyecto, reporte, silver
+from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, silver
 
 log = logging.getLogger("mvde")
 OPCIONALES = {"ml", "powerbi"}
@@ -246,17 +246,25 @@ class Pipeline:
         cfg = self.spec.get("ml")
         if not cfg or not cfg.get("target"):
             return Resultado("ml", True, "sin configuración `ml` en el YAML", omitida=True)
-        tabla = cfg.get("tabla")
-        if cfg.get("sql"):
-            df = almacen.consultar(self.ruta_db, cfg["sql"])      # set de entrenamiento armado en SQL
-            tabla = "sql"
-        else:
-            df = self.gold.get(tabla) if tabla in self.gold else self.silver.get(tabla)
+
+        def _tabla(nombre_sql: str, nombre_tabla: str):
+            if cfg.get(nombre_sql):
+                return almacen.consultar(self.ruta_db, cfg[nombre_sql])       # set armado en SQL sobre el almacén
+            t = cfg.get(nombre_tabla)
+            if not t:
+                return None
+            df = self.gold.get(t) if t in self.gold else self.silver.get(t)
+            if df is None:
+                raise RuntimeError(f"tabla «{t}» no existe ni en gold ni en silver")
+            return df
+
+        df = _tabla("sql", "tabla")
         if df is None:
-            raise RuntimeError(f"tabla «{tabla}» no existe ni en gold ni en silver")
+            raise RuntimeError("`ml` necesita `tabla` o `sql`")
         if cfg["target"] not in df.columns:
-            raise RuntimeError(f"target «{cfg['target']}» no está en {tabla}")
-        res = ml.entrenar(df, cfg)
+            raise RuntimeError(f"target «{cfg['target']}» no está en el set de entrenamiento")
+        df_score = _tabla("sql_score", "tabla_score")
+        res = ml.entrenar(df, cfg, df_score)
         self.dirs["ml"].mkdir(parents=True, exist_ok=True)
         scores = res.pop("scores")
         p_scores = self.dirs["ml"] / "ml_scores.parquet"
@@ -266,8 +274,17 @@ class Pipeline:
         almacen.cargar({"ml_scores": scores}, self.ruta_db)
         self.ml = res
         p = reporte.guardar_json(self.dirs["ml"] / "ml.json", res)
+        arts = [str(p), str(p_scores)]
+        if "estrategia" in scores.columns:
+            px = self.dirs["ml"] / "cartera_priorizada.xlsx"
+            with pd.ExcelWriter(px, engine="xlsxwriter") as w:
+                scores.sort_values("prioridad").to_excel(w, sheet_name="Cartera_priorizada", index=False)
+                (scores.groupby("estrategia").agg(clientes=("probpago", "size"), probpago_prom=("probpago", "mean"),
+                                                  valor_esperado=("valor_esperado_recupero", "sum")).reset_index()
+                 ).to_excel(w, sheet_name="Resumen_estrategias", index=False)
+            arts.append(str(px))
         met = " · ".join(f"{k} {v}" for k, v in res["metricas"].items() if v is not None)
-        return Resultado("ml", True, f"{res['tipo']} · {met}", res, [str(p), str(p_scores)])
+        return Resultado("ml", True, f"{res['tipo']} · {res['modelo']} · holdout {met} · {res['filas_scoreadas']} filas scoreadas", res, arts)
 
     def _reporte(self) -> Resultado:
         if not self.ruta_db.exists():
@@ -335,11 +352,15 @@ class Pipeline:
         lineas += ["", "## Artefactos", ""] + [f"- `{a}`" for e, r in self.resultados.items() for a in r.artefactos]
         p2 = self.dirs["entrega"] / "RESUMEN.md"
         p2.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+        # La justificación etapa por etapa, para técnicos y gerencia, en el idioma del proyecto y en inglés.
+        idioma = self.spec.get("idioma", "es")
+        for lang in dict.fromkeys([idioma, "en"]):
+            (self.dirs["entrega"] / f"JUSTIFICACION_{lang}.md").write_text(justificacion.markdown(self, lang), encoding="utf-8")
         # copia de lo que se entrega, junto
         for src in (self.dirs["reporte"] / "reporte.xlsx", self.dirs["reporte"] / "reporte.html"):
             if src.exists():
                 shutil.copy(src, self.dirs["entrega"] / src.name)
-        for p in self.dirs["powerbi"].glob("*.pbit"):
+        for p in list(self.dirs["powerbi"].glob("*.pbit")) + list(self.dirs["ml"].glob("cartera_priorizada.xlsx")):
             shutil.copy(p, self.dirs["entrega"] / p.name)
         return Resultado("entrega", True, f"manifiesto + resumen + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos copiados",
                          {"carpeta": str(self.dirs["entrega"])}, [str(p1), str(p2)])

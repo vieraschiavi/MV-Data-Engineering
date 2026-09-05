@@ -22,7 +22,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, proyecto  # noqa: E402
+from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, ia, justificacion, proyecto  # noqa: E402
 from mvde.i18n import LANG_NAMES, LANGS, t  # noqa: E402
 from mvde.orquestador import Pipeline  # noqa: E402
 
@@ -135,8 +135,88 @@ if p is None:
     st.info(t("no_project", lang))
     st.stop()
 
-tab_pipe, tab_proj, tab_data, tab_auto, tab_help = st.tabs([
-    t("tab_pipeline", lang), t("tab_project", lang), t("tab_data", lang), t("tab_automation", lang), t("tab_help", lang)])
+tab_pipe, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_auto, tab_help = st.tabs([
+    t("tab_pipeline", lang), t("tab_sources", lang), t("tab_project", lang), t("tab_data", lang), t("tab_ai", lang),
+    t("tab_rationale", lang), t("tab_automation", lang), t("tab_help", lang)])
+
+
+def _guardar_spec(spec: dict) -> None:
+    """Escribe el YAML en la carpeta del proyecto y recarga el pipeline."""
+    ruta = Path(st.session_state["mvde_ruta"])
+    proyecto.guardar(spec, ruta)
+    _cargar_desde_yaml(ruta)
+
+
+# ----------------------------------------------------------------- fuentes
+with tab_src:
+    st.markdown(t("src_intro", lang))
+    st.markdown(f"**{t('src_current', lang)}**")
+    st.dataframe(pd.DataFrame([{"nombre": f["nombre"], "tipo": f.get("tipo"), "ruta/url": f.get("ruta") or f.get("url", "")}
+                               for f in p.spec["fuentes"]]), use_container_width=True, hide_index=True)
+    c_f, c_s = st.columns(2)
+    with c_f:
+        st.markdown(f"**{t('src_files', lang)}**")
+        subidos = st.file_uploader("CSV / XLSX / Parquet / JSON", type=["csv", "txt", "xlsx", "parquet", "json"],
+                                   accept_multiple_files=True, key="src_files")
+        if subidos and st.button(t("src_add_files", lang), key="src_add_files"):
+            base = Path(st.session_state["mvde_ruta"]).parent
+            spec = dict(p.spec)
+            nombres = {f["nombre"] for f in spec["fuentes"]}
+            for f in subidos:
+                (base / f.name).write_bytes(f.getvalue())
+                tipo = {"csv": "csv", "txt": "csv", "xlsx": "excel", "parquet": "parquet", "json": "json"}[f.name.rsplit(".", 1)[-1].lower()]
+                nombre = Path(f.name).stem.lower().replace(" ", "_")
+                if nombre not in nombres:
+                    spec["fuentes"].append({"nombre": nombre, "tipo": tipo, "ruta": f.name})
+                    spec.setdefault("silver", {})[nombre] = {"tipos": "auto"}
+            _guardar_spec(spec)
+            st.rerun()
+    with c_s:
+        st.markdown(f"**{t('src_sql', lang)}**")
+        motor = st.selectbox(t("src_engine", lang), ["SQL Server (pyodbc)", "PostgreSQL", "MySQL / MariaDB", "SQLite (archivo)", "DuckDB (archivo)"], key="src_engine")
+        nombre_f = st.text_input(t("src_name", lang), value="tabla_sql", key="src_name")
+        if motor in ("SQLite (archivo)", "DuckDB (archivo)"):
+            ruta_db = st.text_input("ruta .db / .duckdb", key="src_dbfile")
+            consulta = st.text_area(t("src_query", lang), key="src_query_file", height=80)
+            if st.button(t("src_add_sql", lang), key="src_add_file_db"):
+                spec = dict(p.spec)
+                f = {"nombre": nombre_f, "tipo": "sqlite" if motor.startswith("SQLite") else "duckdb", "ruta": ruta_db}
+                f["consulta" if consulta.strip().lower().startswith(("select", "with")) else "tabla"] = consulta.strip() or nombre_f
+                spec["fuentes"].append(f)
+                _guardar_spec(spec)
+                st.rerun()
+        else:
+            host = st.text_input(t("src_host", lang), key="src_host")
+            base_db = st.text_input(t("src_db", lang), key="src_db")
+            usuario = st.text_input(t("src_user", lang), key="src_user")
+            var_pwd = st.text_input(t("src_pwd_env", lang), value="DB_PASSWORD", key="src_pwd_env")
+            consulta = st.text_area(t("src_query", lang), key="src_query", height=80)
+            st.caption(t("src_pwd_hint", lang))
+            pref = {"SQL Server (pyodbc)": "mssql+pyodbc://{u}:{p}@{h}/{d}?driver=ODBC+Driver+17+for+SQL+Server",
+                    "PostgreSQL": "postgresql+psycopg2://{u}:{p}@{h}/{d}", "MySQL / MariaDB": "mysql+pymysql://{u}:{p}@{h}/{d}"}[motor]
+            url_env = pref.format(u=usuario, p="${" + var_pwd + "}", h=host, d=base_db)
+            st.code(url_env, language="text")
+            b1, b2 = st.columns(2)
+            if b1.button(t("src_test", lang), key="src_test"):
+                pwd = os.environ.get(var_pwd, "")
+                if not pwd:
+                    st.warning(f"{var_pwd} = ∅")
+                else:
+                    try:
+                        import sqlalchemy as sa
+                        with sa.create_engine(pref.format(u=usuario, p=pwd, h=host, d=base_db)).connect() as con:
+                            con.execute(sa.text("SELECT 1"))
+                        st.success("OK")
+                    except Exception as exc:  # noqa: BLE001 - se muestra el motivo
+                        st.error(str(exc).splitlines()[0])
+            if b2.button(t("src_add_sql", lang), key="src_add_sql"):
+                spec = dict(p.spec)
+                f = {"nombre": nombre_f, "tipo": "sql", "url": url_env}
+                f["consulta" if consulta.strip().lower().startswith(("select", "with")) else "tabla"] = consulta.strip() or nombre_f
+                spec["fuentes"].append(f)
+                spec.setdefault("silver", {})[nombre_f] = {"tipos": "auto"}
+                _guardar_spec(spec)
+                st.rerun()
 
 # ----------------------------------------------------------------- pipeline
 with tab_pipe:
@@ -245,6 +325,65 @@ with tab_data:
         st.markdown(f"**{t('preview', lang)}**")
         st.dataframe(df.head(200), use_container_width=True)
         st.dataframe(pd.DataFrame({"columna": df.columns, "tipo": [str(x) for x in df.dtypes], "nulos %": [round(100 * float(df[c].isna().mean()), 1) for c in df.columns]}), use_container_width=True)
+
+# ----------------------------------------------------------------- IA
+with tab_ai:
+    st.markdown(t("ai_intro", lang))
+    provs = ia.proveedores()
+    if not ia.disponible():
+        st.warning(t("ai_no_dxl", lang))
+    c1, c2, c3 = st.columns([2, 2, 3])
+    prov = c1.selectbox(t("ai_provider", lang), list(provs), format_func=lambda k: provs[k]["nombre"], key="ai_prov")
+    modelos_est = [m for m, _ in provs[prov].get("modelos", [])]
+    modelos = st.session_state.get(f"ai_modelos_{prov}") or modelos_est
+    modelo = c2.selectbox(t("ai_model", lang), modelos, key=f"ai_model_{prov}")
+    clave = c3.text_input(t("ai_key", lang), type="password", key="ai_key") if provs[prov].get("env") else ""
+    endpoint = st.text_input(t("ai_endpoint", lang), key="ai_endpoint") if provs[prov].get("necesita_endpoint") else ""
+    b1, b2, _ = st.columns([2, 2, 4])
+    if b1.button(t("ai_refresh", lang), key="ai_refresh"):
+        try:
+            lista = ia.listar_modelos(prov, clave or None, endpoint)
+            st.session_state[f"ai_modelos_{prov}"] = lista or modelos_est
+            st.success(t("ai_models_updated", lang).format(n=len(lista)))
+            st.rerun()
+        except RuntimeError as exc:
+            st.error(str(exc))
+    if b2.button(t("ai_test", lang), key="ai_test"):
+        try:
+            st.success(ia._dxl().probar_conexion(prov, modelo, clave or None, endpoint))
+        except Exception as exc:  # noqa: BLE001 - se muestra el motivo
+            st.error(str(exc).splitlines()[0])
+    st.divider()
+    pregunta = st.text_area(t("ai_ask", lang), placeholder=t("ai_ask_hint", lang), key="ai_q", height=90)
+    if st.button(t("ai_send", lang), type="primary", key="ai_send") and pregunta.strip():
+        with st.spinner("…"):
+            try:
+                r = ia.preguntar(pregunta, p, prov, modelo, clave or None, endpoint, lang)
+            except Exception as exc:  # noqa: BLE001 - la IA falló: se dice y se ofrece el modo local
+                r = {"respuesta": f"{exc}", "sql": None, "tabla": None, "modo": "error", "nota": "", "error": str(exc)}
+        st.session_state.setdefault("ai_hist", []).insert(0, {"q": pregunta, **{k: v for k, v in r.items() if k != "tabla"}, "tabla": r.get("tabla")})
+    for i, h in enumerate(st.session_state.get("ai_hist", [])[:8]):
+        with st.container(border=True):
+            st.markdown(f"**{h['q']}**  \n<small>{t('ai_mode', lang)}: {h['modo']}</small>", unsafe_allow_html=True)
+            st.markdown(h["respuesta"])
+            if h.get("sql"):
+                st.caption(t("ai_sql_used", lang))
+                st.code(h["sql"], language="sql")
+            if h.get("tabla") is not None:
+                st.dataframe(h["tabla"], use_container_width=True)
+
+# ----------------------------------------------------------------- justificación
+with tab_just:
+    if not p.resultados:
+        st.info(t("status_pending", lang))
+    else:
+        for j in justificacion.generar(p, lang):
+            st.markdown(f"<div class='mv-etapa mv-{j['estado']}'>{ICONO.get(j['estado'], '⬜')} <b>{j['titulo']}</b><br>"
+                        f"<small><b>{t('j_que', lang)}</b> {j['que']}</small><br>"
+                        f"<small><b>{t('j_tec', lang)}</b> {j['tecnico']}</small><br>"
+                        f"<small><b>{t('j_ger', lang)}</b> {j['gerencia']}</small></div>", unsafe_allow_html=True)
+        md = justificacion.markdown(p, lang)
+        st.download_button(f"{t('download', lang)} JUSTIFICACION_{lang}.md", md.encode("utf-8"), file_name=f"JUSTIFICACION_{lang}.md", key="dl_just")
 
 # ----------------------------------------------------------------- automatización
 with tab_auto:

@@ -16,7 +16,7 @@ import pandas as pd
 
 from . import proyecto
 
-NOMBRES = ["cobranzas", "ventas"]
+NOMBRES = ["cobranzas", "ventas", "kash"]
 
 
 def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
@@ -188,11 +188,167 @@ def _ventas(carpeta: Path, seed: int = 42) -> dict:
     }
 
 
+
+
+# ---------------------------------------------------------------------------
+# Kash: una financiera de cobranzas, con el ESQUEMA REAL de un backtest a
+# ciegas (train + score de la misma fecha) y datos 100 % sintéticos.
+#
+# El esquema y las proporciones salen de estadísticas AGREGADAS de un archivo
+# real (mezcla de estados y subestados, bandas de score, distribución de días
+# de atraso y de cuota, tasa de meses con pago); ninguna fila real viaja en
+# este repositorio. Para correr el mismo YAML con los archivos reales, basta
+# apuntar `fuentes[].ruta` a ellos: el esquema es el mismo.
+# ---------------------------------------------------------------------------
+
+_KASH_SUBESTADOS = {
+    "Jurídica": [("Incobrables", 0.45), ("Mora Tardía - Estudio", 0.43), ("Extrajudicial", 0.06),
+                 ("Extrajudicial SOMA", 0.012), ("Suspensión SC", 0.01), ("Mora Tardía - Juicio", 0.004),
+                 ("Renuncia", 0.004), ("Venta", 0.002), ("Normal", 0.028)],
+    "Comercial": [("Normal", 0.62), ("Mora Temprana", 0.30), ("Negociación", 0.08)],
+    "Cobranza": [("Normal", 0.35), ("Mora Temprana", 0.35), ("Negociación", 0.30)],
+    "Contaduría": [("Normal", 1.0)],
+}
+_KASH_P_PAGO_SUB = {"Normal": 0.87, "Mora Temprana": 0.95, "Negociación": 0.84, "Extrajudicial": 0.67,
+                    "Extrajudicial SOMA": 0.53, "Mora Tardía - Estudio": 0.09, "Mora Tardía - Juicio": 0.09,
+                    "Incobrables": 0.007, "Suspensión SC": 0.05, "Renuncia": 0.0, "Venta": 0.0}
+_KASH_SCORE_AJUSTE = {"A": 1.35, "B": 1.05, "C": 0.85, "D": 0.95, "E": 0.7, "F": 0.5, "F-": 0.55, "SIN_SCORE": 0.9}
+
+
+def _kash_universo(rng, n: int) -> pd.DataFrame:
+    estados = rng.choice(["Jurídica", "Comercial", "Cobranza", "Contaduría"], n, p=[0.646, 0.209, 0.142, 0.003])
+    subs = []
+    for e in estados:
+        opciones, pesos = zip(*_KASH_SUBESTADOS[e])
+        pesos = np.array(pesos) / sum(pesos)
+        subs.append(rng.choice(opciones, p=pesos))
+    score = rng.choice(["SIN_SCORE", "C", "A", "B", "F-", "D", "E", "F"], n,
+                       p=[0.472, 0.122, 0.12, 0.114, 0.057, 0.049, 0.036, 0.03])
+    dias = np.where(np.isin(subs, ["Normal", "Mora Temprana", "Negociación"]), rng.integers(0, 120, n),
+                    np.where(np.isin(subs, ["Extrajudicial", "Extrajudicial SOMA"]), rng.integers(120, 900, n),
+                             rng.integers(700, 6000, n)))
+    cuota = np.where(rng.random(n) < 0.54, 0.0, np.round(np.exp(rng.normal(np.log(4400), 0.6, n)), 2))
+    return pd.DataFrame({"IdCliente": np.sort(rng.choice(np.arange(10, 60_000), n, replace=False)),
+                         "CuotaEfectivaRef": cuota, "DiasAtraso_Actual": dias, "Estado": estados,
+                         "SubEstado": subs, "ScoreCash": score})
+
+
+def _kash_meses(rng, base: pd.DataFrame, p_pago: np.ndarray, n_meses: int = 12) -> pd.DataFrame:
+    """12 columnas Monto_Mk (pagado en el mes k) y 12 Pago_Mk (1 si Monto_Mk > 0)."""
+    n = len(base)
+    persist = rng.beta(2, 2, n)                    # cuánto se parece cada mes al anterior
+    out = base.copy()
+    prev = rng.random(n) < p_pago
+    for k in range(1, n_meses + 1):
+        cambia = rng.random(n) > persist
+        pago = np.where(cambia, rng.random(n) < p_pago, prev)
+        monto = np.where(pago, np.round(np.exp(rng.normal(np.log(7700), 0.75, n)), 6), 0.0)
+        out[f"Monto_M{k}"] = monto
+        prev = pago
+    for k in range(1, n_meses + 1):
+        out[f"Pago_M{k}"] = (out[f"Monto_M{k}"] > 0).astype(int)
+    out["NMesesConPago_12M"] = out[[f"Pago_M{k}" for k in range(1, n_meses + 1)]].sum(axis=1)
+    return out
+
+
+def _kash(carpeta: Path, n: int = 6000, seed: int = 42) -> dict:
+    rng = np.random.default_rng(seed)
+    base = _kash_universo(rng, n)
+    p = np.array([_KASH_P_PAGO_SUB[s] * _KASH_SCORE_AJUSTE[sc] for s, sc in zip(base["SubEstado"], base["ScoreCash"])])
+    p = np.clip(p * rng.uniform(0.8, 1.2, n), 0.0, 0.98)
+    train = _kash_meses(rng, base, p)
+    # Ventana de validación (3 meses futuros): el target del backtest.
+    val = np.zeros(n, dtype=int)
+    shock = rng.normal(0, 0.18, n)                # lo que el pasado no explica: cambios de situación, gestión, azar
+    for _ in range(3):
+        val += (rng.random(n) < np.clip(0.55 * p + 0.35 * (train["NMesesConPago_12M"] / 12) + shock - 0.08, 0.02, 0.97)).astype(int)
+    train["NMesesConPago_VAL"] = val
+    train["NMesesConPago_TRAIN"] = train[[f"Pago_M{k}" for k in range(4, 13)]].sum(axis=1)
+    train["Formato"] = "PIVOT"
+    # Score: mismo universo tres meses después, sin la ventana de validación (es lo que hay que predecir).
+    score = _kash_meses(np.random.default_rng(seed + 1), base, p)
+    score["DiasAtraso_Actual"] = np.where(score["DiasAtraso_Actual"] > 0, score["DiasAtraso_Actual"] + 90, 0)
+    score["Formato"] = "PIVOT"
+    cols = ["IdCliente", "CuotaEfectivaRef", "DiasAtraso_Actual", "Estado", "SubEstado", "ScoreCash"] + \
+           [f"Monto_M{k}" for k in range(1, 13)] + [f"Pago_M{k}" for k in range(1, 13)]
+    train = train[cols + ["NMesesConPago_12M", "NMesesConPago_VAL", "NMesesConPago_TRAIN", "Formato"]]
+    score = score[cols + ["NMesesConPago_12M", "Formato"]]
+    # Mismo formato que el archivo real: separador `;`, BOM de Excel.
+    train.to_csv(carpeta / "BACKTEST_TRAIN.csv", index=False, sep=";", encoding="utf-8-sig")
+    score.to_csv(carpeta / "BACKTEST_SCORE.csv", index=False, sep=";", encoding="utf-8-sig")
+    meses = pd.date_range("2025-06-01", periods=12, freq="MS").strftime("%Y-%m-%d").tolist()
+    return {
+        "nombre": "Kash demo",
+        "descripcion": "Financiera de cobranzas: backtest a ciegas con train (12 meses de pagos + ventana futura) y score de la misma fecha. Esquema real, datos 100 % sintéticos.",
+        "idioma": "es",
+        "fuentes": [
+            {"nombre": "kash_train", "tipo": "csv", "ruta": "BACKTEST_TRAIN.csv", "opciones": {"sep": ";"}},
+            {"nombre": "kash_train_meses", "tipo": "csv", "ruta": "BACKTEST_TRAIN.csv", "opciones": {"sep": ";"}},
+            {"nombre": "kash_score", "tipo": "csv", "ruta": "BACKTEST_SCORE.csv", "opciones": {"sep": ";"}},
+        ],
+        "silver": {
+            "kash_train": {"tipos": "auto", "quitar": ["Formato"], "deduplicar": ["IdCliente"],
+                           "derivar": {"pago_val": "NMesesConPago_VAL > 0",
+                                       "tramo_atraso": "np.where(df['DiasAtraso_Actual'] <= 90, '0-90', np.where(df['DiasAtraso_Actual'] <= 365, '91-365', np.where(df['DiasAtraso_Actual'] <= 730, '366-730', '730+')))"}},
+            "kash_train_meses": {"tipos": "auto", "quitar": ["Formato"],
+                                 "despivotear": {"id": ["IdCliente", "SubEstado"], "periodo": "mes",
+                                                 "grupos": {"monto_pagado": {m: f"Monto_M{k}" for k, m in enumerate(meses, 1)},
+                                                            "pago": {m: f"Pago_M{k}" for k, m in enumerate(meses, 1)}}},
+                                 "fechas": ["mes"]},
+            "kash_score": {"tipos": "auto", "quitar": ["Formato"], "deduplicar": ["IdCliente"],
+                           "derivar": {"monto_ref": "np.where(df['CuotaEfectivaRef'] > 0, df['CuotaEfectivaRef'], df[[f'Monto_M{k}' for k in range(1, 13)]].replace(0, np.nan).mean(axis=1).fillna(0))",
+                                       "tramo_atraso": "np.where(df['DiasAtraso_Actual'] <= 90, '0-90', np.where(df['DiasAtraso_Actual'] <= 365, '91-365', np.where(df['DiasAtraso_Actual'] <= 730, '366-730', '730+')))"}},
+        },
+        "calidad": {"criticos_cortan": True, "reglas": [
+            {"tabla": "kash_train", "columna": "IdCliente", "tipo": "unico", "critico": True},
+            {"tabla": "kash_score", "columna": "IdCliente", "tipo": "unico", "critico": True},
+            {"tabla": "kash_train", "columna": "DiasAtraso_Actual", "tipo": "no_negativo", "critico": True},
+            {"tabla": "kash_train", "columna": "ScoreCash", "tipo": "valores", "valores": ["A", "B", "C", "D", "E", "F", "F-", "SIN_SCORE"], "critico": True},
+            {"tabla": "kash_train", "columna": "NMesesConPago_12M", "tipo": "rango", "min": 0, "max": 12, "critico": True},
+            {"tabla": "kash_train", "tipo": "expresion", "expresion": "NMesesConPago_12M == Pago_M1 + Pago_M2 + Pago_M3 + Pago_M4 + Pago_M5 + Pago_M6 + Pago_M7 + Pago_M8 + Pago_M9 + Pago_M10 + Pago_M11 + Pago_M12", "critico": True},
+            {"tabla": "kash_score", "columna": "IdCliente", "tipo": "referencia", "a": "kash_train.IdCliente", "critico": False},
+            {"tabla": "kash_train_meses", "columna": "monto_pagado", "tipo": "no_negativo", "critico": True},
+            {"tabla": "kash_train", "tipo": "filas_min", "valor": 1000, "critico": True},
+        ]},
+        "modelo": {
+            "dimensiones": [{"nombre": "dim_cliente", "desde": "kash_score", "clave": "IdCliente",
+                             "atributos": ["Estado", "SubEstado", "ScoreCash", "tramo_atraso"], "scd": 2}],
+            "hechos": [{"nombre": "fact_pago_mes", "desde": "kash_train_meses", "fecha": "mes", "claves": {"IdCliente": "dim_cliente"}, "medidas": ["monto_pagado", "pago"]},
+                       {"nombre": "fact_cliente_train", "desde": "kash_train", "claves": {"IdCliente": "dim_cliente"}},
+                       {"nombre": "fact_cliente_score", "desde": "kash_score", "claves": {"IdCliente": "dim_cliente"}}],
+            "calendario": "auto",
+        },
+        "vistas": {
+            "v_pago_mensual": "SELECT c.anio_mes, COUNT(*) clientes, SUM(f.pago) con_pago, ROUND(100.0*SUM(f.pago)/COUNT(*),2) pct_con_pago, ROUND(SUM(f.monto_pagado),0) monto_pagado FROM gold.fact_pago_mes f JOIN gold.dim_calendario c USING (fecha_key) GROUP BY 1 ORDER BY 1",
+            "v_tasa_pago_subestado": "SELECT d.SubEstado, COUNT(*) clientes, ROUND(100.0*AVG(CASE WHEN t.pago_val THEN 1 ELSE 0 END),2) tasa_pago_val_pct FROM gold.fact_cliente_train t JOIN gold.dim_cliente d USING (dim_cliente_key) WHERE d.is_current GROUP BY 1 ORDER BY 3 DESC",
+        },
+        "kpis": [
+            {"nombre": "Clientes a scorear", "tabla": "fact_cliente_score", "agregacion": "count", "formato": "#,0"},
+            {"nombre": "Tasa de pago histórica %", "tipo": "sql", "sql": "SELECT AVG(CASE WHEN pago_val THEN 1.0 ELSE 0.0 END) FROM gold.fact_cliente_train", "formato": "0.0%"},
+            {"nombre": "Monto pagado 12M", "tabla": "fact_pago_mes", "columna": "monto_pagado", "agregacion": "sum", "formato": "#,0", "por": "dim_cliente.SubEstado"},
+            {"nombre": "Meses con pago promedio", "tabla": "fact_cliente_train", "columna": "NMesesConPago_12M", "agregacion": "avg", "formato": "#,0.00"},
+            {"nombre": "ProbPago promedio %", "tabla": "ml_scores", "columna": "probpago", "agregacion": "avg", "formato": "0.0%", "por": "segmento_propension"},
+            {"nombre": "Valor esperado de recupero", "tabla": "ml_scores", "columna": "valor_esperado_recupero", "agregacion": "sum", "formato": "#,0", "por": "estrategia"},
+        ],
+        "gobernanza": {"dueno": "BI Cobranzas", "pii": [],
+                       "descripciones": {"kash_train.NMesesConPago_VAL": "Meses con pago en la ventana futura (3 meses): el target del backtest",
+                                         "kash_train.pago_val": "1 si el cliente pagó al menos un mes de la ventana futura",
+                                         "kash_train.ScoreCash": "Banda de score interno A (mejor) a F- y SIN_SCORE",
+                                         "kash_train.DiasAtraso_Actual": "Días de atraso a la fecha de corte"}},
+        "ml": {"tabla": "fact_cliente_train", "tabla_score": "fact_cliente_score", "target": "pago_val", "tipo": "clasificacion",
+               "excluir": ["NMesesConPago_VAL", "NMesesConPago_TRAIN", "monto_ref"], "id": "dim_cliente_key",
+               "cobranzas": {"monto": "monto_ref", "dias_mora": "DiasAtraso_Actual"}},
+        "reporte": {"titulo": "Kash · ProbPago, backtest a ciegas y cartera priorizada", "graficos": "auto"},
+        "powerbi": {"generar": True, "nombre": "Kash"},
+        "automatizacion": {"hora": "05:00", "reintentos": 3},
+    }
+
+
 def crear(nombre: str, carpeta: Path) -> Path:
     if nombre not in NOMBRES:
         raise ValueError(f"demo desconocida; válidas: {NOMBRES}")
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
-    spec = _cobranzas(carpeta) if nombre == "cobranzas" else _ventas(carpeta)
+    spec = {"cobranzas": _cobranzas, "ventas": _ventas, "kash": _kash}[nombre](carpeta)
     spec = proyecto.normalizar(spec)
     return proyecto.guardar(spec, carpeta / "proyecto.yaml")
