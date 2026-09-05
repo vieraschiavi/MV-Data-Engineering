@@ -302,6 +302,11 @@ _T: dict[str, dict[str, str]] = {
 }
 
 
+from .textos_transformaciones import TEXTOS as _TEXTOS_X  # noqa: E402 - los textos de la bitácora viven aparte por tamaño
+
+_T.update(_TEXTOS_X)
+
+
 def t(key: str, lang: str = DEFAULT_LANG) -> str:
     entry = _T.get(key)
     if not entry:

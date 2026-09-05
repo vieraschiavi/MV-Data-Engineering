@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import ETAPAS, __version__
-from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, salud, silver
+from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, salud, silver, transformaciones
 
 log = logging.getLogger("mvde")
 OPCIONALES = {"ml", "powerbi"}
@@ -64,6 +64,7 @@ class Pipeline:
         self.ml: dict | None = None
         self.medidas: list[dict] = []
         self.salud: dict = {}
+        self.transformaciones: dict = {}
         self.resultados: dict[str, Resultado] = {}
         self._cargar_estado()
 
@@ -372,8 +373,15 @@ class Pipeline:
                 shutil.copy(src, self.dirs["entrega"] / src.name)
         for p in list(self.dirs["powerbi"].glob("*.pbit")) + list(self.dirs["ml"].glob("cartera_priorizada.xlsx")):
             shutil.copy(p, self.dirs["entrega"] / p.name)
-        return Resultado("entrega", True, f"salud {self.salud['total']}/100 · manifiesto + resumen + justificación + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos",
-                         {"carpeta": str(self.dirs["entrega"]), "salud": self.salud}, [str(p1), str(p2)])
+        # El resultado se registra ANTES de exportar la bitácora de transformaciones, así el
+        # paso «entrega» aparece en ella; después se le suman los archivos generados.
+        r = Resultado("entrega", True, "", {"carpeta": str(self.dirs["entrega"]), "salud": self.salud}, [str(p1), str(p2)])
+        self.resultados["entrega"] = r
+        self.transformaciones = {lang: transformaciones.exportar(self, self.dirs["entrega"], lang) for lang in dict.fromkeys([idioma, "en"])}
+        r.evidencia["transformaciones"] = self.transformaciones
+        r.artefactos += [v for d in self.transformaciones.values() for v in d.values() if not v.startswith("error")]
+        r.resumen = f"salud {self.salud['total']}/100 · manifiesto + resumen + justificación + transformaciones + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos"
+        return r
 
 
 def _slug(txt: str) -> str:

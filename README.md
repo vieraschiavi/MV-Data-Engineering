@@ -26,13 +26,15 @@ falla, las siguientes no corren y la evidencia dice por qué.
 | Reporte | KPIs (agregación, ratio, SQL), gráficos, Excel corporativo y HTML autocontenido | `reporte.xlsx`, `reporte.html` |
 | DAX | medidas generadas: DIVIDE, KEEPFILTERS, REMOVEFILTERS, DATEADD | `measures.dax` |
 | Power BI | `.pbit` + PBIP con modelo, relaciones, medidas y tablero, auditado (MV DAX Lab) | `<nombre>.pbit`, `_demo.pbit` |
-| Entrega | manifiesto, resumen ejecutivo, **justificación etapa por etapa para técnicos y gerencia** (ES + EN) y copia de lo entregable | `entrega/` |
+| Entrega | manifiesto, resumen ejecutivo, salud + historial, **justificación etapa por etapa para técnicos y gerencia** (ES + EN), **bitácora de transformaciones en HTML / Word / PDF** y copia de lo entregable | `entrega/` |
 
 ## En la app
 
 - **Fuentes:** subís archivos (CSV, Excel, Parquet, JSON) o declarás una conexión SQL de sólo lectura (SQL Server, PostgreSQL, MySQL, SQLite, DuckDB); la contraseña se lee de una variable de entorno, nunca va al YAML.
 - **IA:** elegís proveedor (Claude, OpenAI, Gemini, Copilot/Azure, Groq, Mistral, DeepSeek, Ollama local) y modelo con tu propia clave, actualizás la lista de modelos desde la API del proveedor y preguntás en lenguaje natural: la IA propone una consulta, el motor la ejecuta en el almacén (sólo lectura) y la IA interpreta el resultado. Sin clave, el modo local responde con los KPIs, la calidad y el modelo.
+- **Salud:** puntaje por área (datos, calidad, modelo, gobernanza, BI, ML), mejoras sugeridas con parche al YAML que se aplican con un clic, y el antes/después de cada corrida.
 - **Justificación:** para cada etapa, qué se hizo con los números de la corrida, la lectura técnica y la lectura gerencial. Se descarga en Markdown.
+- **Transformaciones:** la bitácora completa de la corrida —cada transformación y característica técnica, en el orden del pipeline— contada tres veces por paso: **técnico** (qué se hizo exactamente), **en criollo** (para un jefe o gerente) e **impacto río abajo** (qué cambia en el modelo, los KPIs o el tablero). Filtro por etapa, vista sólo técnica o sólo criolla, y exportación a **HTML, Word y PDF** (también quedan en `entrega/` en cada corrida).
 - **Demos:** `cobranzas` (financiera sintética), `ventas` (consumo masivo, tres formatos de origen) y `kash` (backtest a ciegas de una financiera: train con 12 meses de pagos y ventana futura + score de la misma fecha, esquema real con `;` y BOM, datos 100 % sintéticos calibrados con estadísticas agregadas).
 
 ## Correr
@@ -83,9 +85,9 @@ sintéticos con defectos inyectados a propósito para que el gate tenga algo que
 ```
 mv-data-engineering/
 ├── mvde/            motor: proyecto · fuentes · bronze · silver · calidad · gold · almacen · gobernanza ·
-│                    ml · reporte · dax · powerbi · ia · justificacion · orquestador · automatizacion · demos · cli · i18n
+│                    ml · reporte · dax · powerbi · ia · justificacion · salud · transformaciones · orquestador · automatizacion · demos · cli · i18n
 ├── app/app.py       programa Streamlit (ES/EN/PT), misma familia visual que MV Data Governance
-├── tests/           26 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación
+├── tests/           37 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación, salud, transformaciones
 ├── run.sh · MV_DataEngineering.bat · requirements.txt · CLAUDE.md
 ```
 

@@ -7,12 +7,14 @@ artefactos descargables. La UI no calcula nada: todo lo hace `mvde/`.
 """
 from __future__ import annotations
 
+import html
 import io
 import json
 import os
 import sys
 import tempfile
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -22,7 +24,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, ia, justificacion, proyecto, salud  # noqa: E402
+from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, ia, justificacion, proyecto, salud, transformaciones  # noqa: E402
 from mvde.i18n import LANG_NAMES, LANGS, t  # noqa: E402
 from mvde.orquestador import Pipeline  # noqa: E402
 
@@ -135,9 +137,9 @@ if p is None:
     st.info(t("no_project", lang))
     st.stop()
 
-tab_pipe, tab_health, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_auto, tab_help = st.tabs([
+tab_pipe, tab_health, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_trans, tab_auto, tab_help = st.tabs([
     t("tab_pipeline", lang), t("tab_health", lang), t("tab_sources", lang), t("tab_project", lang), t("tab_data", lang), t("tab_ai", lang),
-    t("tab_rationale", lang), t("tab_automation", lang), t("tab_help", lang)])
+    t("tab_rationale", lang), t("tab_transforms", lang), t("tab_automation", lang), t("tab_help", lang)])
 
 
 def _guardar_spec(spec: dict) -> None:
@@ -449,6 +451,51 @@ with tab_just:
                         f"<small><b>{t('j_ger', lang)}</b> {j['gerencia']}</small></div>", unsafe_allow_html=True)
         md = justificacion.markdown(p, lang)
         st.download_button(f"{t('download', lang)} JUSTIFICACION_{lang}.md", md.encode("utf-8"), file_name=f"JUSTIFICACION_{lang}.md", key="dl_just")
+
+# ----------------------------------------------------------------- transformaciones
+with tab_trans:
+    if not p.resultados:
+        st.info(t("x_no_steps", lang))
+    else:
+        pasos_ = transformaciones.pasos(p, lang)
+        st.markdown(t("x_intro", lang).format(fecha=datetime.now().strftime("%Y-%m-%d %H:%M"), n_pasos=len(pasos_),
+                                              n_etapas=len({s_["etapa"] for s_ in pasos_})))
+        c_v, c_e = st.columns([1, 2])
+        vista = c_v.radio(t("x_view", lang), [t("x_view_all", lang), t("x_view_tec", lang), t("x_view_cri", lang)], horizontal=True, key="x_view")
+        etapas_con = [e for e in ETAPAS if any(s_["etapa"] == e for s_ in pasos_)]
+        elegidas = c_e.multiselect(t("x_filter_stage", lang), etapas_con, default=etapas_con, format_func=lambda e: t(f"st_{e}", lang), key="x_etapas")
+        st.dataframe(pd.DataFrame(transformaciones.resumen(pasos_, lang)).rename(
+            columns={"etapa": t("x_etapa", lang), "pasos": t("x_n_pasos", lang), "fallos": t("x_failed", lang), "objetos": t("x_objeto", lang)}),
+            use_container_width=True, hide_index=True)
+        st.markdown(f"**{t('x_export', lang)}**")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.download_button("HTML", transformaciones.html(p, lang).encode("utf-8"), file_name=f"TRANSFORMACIONES_{lang}.html", mime="text/html", key="dl_x_html")
+        for col, fmt, fn, mime in ((c2, "docx", transformaciones.docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                                   (c3, "pdf", transformaciones.pdf, "application/pdf")):
+            try:
+                col.download_button("Word" if fmt == "docx" else "PDF", fn(p, lang), file_name=f"TRANSFORMACIONES_{lang}.{fmt}", mime=mime, key=f"dl_x_{fmt}")
+            except RuntimeError as exc:
+                col.caption(str(exc))
+        c4.download_button("JSON", json.dumps(pasos_, ensure_ascii=False, indent=2).encode("utf-8"), file_name=f"TRANSFORMACIONES_{lang}.json", mime="application/json", key="dl_x_json")
+        st.caption(t("x_export_hint", lang))
+        etapa_actual = None
+        for s_ in pasos_:
+            if s_["etapa"] not in elegidas:
+                continue
+            if s_["etapa"] != etapa_actual:
+                etapa_actual = s_["etapa"]
+                st.markdown(f"### {s_['etapa_titulo']}")
+                st.caption(t(f"d_{etapa_actual}", lang))
+            lineas = []
+            if vista != t("x_view_cri", lang):
+                lineas.append(f"<small><b>{t('x_tec', lang)}</b> {html.escape(s_['tecnico'])}</small>")
+            if vista != t("x_view_tec", lang):
+                lineas.append(f"<small><b style='color:{BRAND['amber']}'>{t('x_cri', lang)}</b> {html.escape(s_['criollo'])}</small>")
+                lineas.append(f"<small><b style='color:{BRAND['blue']}'>{t('x_imp', lang)}</b> {html.escape(s_['impacto'])}</small>")
+            if vista != t("x_view_cri", lang):
+                lineas.append(f"<small>{t('x_ev', lang)}: {html.escape(str(s_['evidencia']))}</small>")
+            st.markdown(f"<div class='mv-etapa mv-{s_['estado']}'><b style='color:{BRAND['amber']}'>{s_['n']}</b> &nbsp;<b>{html.escape(s_['objeto'])}</b> "
+                        f"<small>· {s_['tipo']}</small><br>" + "<br>".join(lineas) + "</div>", unsafe_allow_html=True)
 
 # ----------------------------------------------------------------- automatización
 with tab_auto:

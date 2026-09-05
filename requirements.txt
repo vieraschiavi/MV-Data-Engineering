@@ -10,6 +10,8 @@ openpyxl>=3.1,<4
 xlsxwriter>=3.1,<4
 scikit-learn>=1.4,<2
 sqlalchemy>=2.0,<3
+python-docx>=1.1,<2      # bitácora de transformaciones en Word
+reportlab>=4.0,<6        # bitácora de transformaciones en PDF
 # --- tests ---
 pytest>=8.0,<9
 # --- opcionales, según la fuente que uses ---
