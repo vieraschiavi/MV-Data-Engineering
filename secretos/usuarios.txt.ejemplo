@@ -1,0 +1,10 @@
+# MV Data Engineering · usuarios del despliegue.
+# Una línea por persona. Cada línea se genera en la VM con:
+#     python -m mvde usuario <nombre>
+# que pide la contraseña sin mostrarla y devuelve esta línea ya hasheada.
+# La contraseña en sí no se guarda en ningún lado.
+#
+# Copiá este archivo a secretos/usuarios.txt y pegá abajo las líneas reales.
+# Ese archivo NO se versiona (está en .gitignore).
+#
+# martin:pbkdf2_sha256$200000$<sal>$<hash>

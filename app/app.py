@@ -24,8 +24,8 @@ RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, ia, justificacion, proyecto, salud, transformaciones  # noqa: E402
-from mvde.i18n import LANG_NAMES, LANGS, t  # noqa: E402
+from mvde import APP_NAME, BRAND, ETAPAS, __version__, auth, automatizacion, demos, ia, justificacion, proyecto, salud, transformaciones  # noqa: E402
+from mvde.i18n import DEFAULT_LANG, LANG_NAMES, LANGS, t  # noqa: E402
 from mvde.orquestador import Pipeline  # noqa: E402
 
 st.set_page_config(page_title=APP_NAME, page_icon="", layout="wide")
@@ -82,6 +82,37 @@ def _cargar_desde_yaml(ruta: Path) -> None:
     st.session_state["mvde_ruta"] = str(ruta)
 
 
+# ----------------------------------------------------------------- login
+# Sólo aparece si el despliegue declaró usuarios (ver mvde/auth.py). En el
+# escritorio no hay variable, no hay login y la app abre como siempre.
+def _puerta() -> None:
+    if not auth.activo() or auth.sesion_usuario(st.session_state):
+        return
+    lang_login = st.session_state.get("lang", DEFAULT_LANG)
+    st.markdown("<span class='mv-badge'>MV · Data Engineering</span>", unsafe_allow_html=True)
+    st.title(t("auth_title", lang_login))
+    st.caption(t("auth_intro", lang_login))
+    with st.form("mvde_login"):
+        usuario = st.text_input(t("auth_user", lang_login), key="auth_u")
+        clave = st.text_input(t("auth_password", lang_login), type="password", key="auth_p")
+        enviar = st.form_submit_button(t("auth_enter", lang_login), type="primary")
+    if enviar:
+        espera = auth.bloqueado(usuario)
+        if espera:
+            st.error(t("auth_locked", lang_login).format(segundos=espera))
+        elif auth.verificar(usuario, clave):
+            auth.abrir_sesion(st.session_state, usuario)
+            st.rerun()
+        else:
+            # Un solo mensaje para usuario inexistente y contraseña mala: decir
+            # cuál de los dos falló regala la mitad de la credencial.
+            st.error(t("auth_bad", lang_login))
+    st.stop()
+
+
+_puerta()
+
+
 # ----------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown(f"## {APP_NAME}")
@@ -126,6 +157,12 @@ with st.sidebar:
             _cargar_desde_yaml(ruta)
             st.rerun()
     st.divider()
+    quien = auth.sesion_usuario(st.session_state)
+    if quien:
+        st.caption(t("auth_as", lang).format(usuario=quien))
+        if st.button(t("auth_logout", lang), key="auth_salir"):
+            auth.cerrar_sesion(st.session_state)
+            st.rerun()
     st.caption(f"v{__version__} · {t('demo_note', lang)}")
 
 st.markdown("<span class='mv-badge'>MV · Data Engineering</span>", unsafe_allow_html=True)

@@ -299,6 +299,20 @@ _T: dict[str, dict[str, str]] = {
                     "en": "This run's KPIs were proposed automatically (the YAML declares none): review them and write them down.",
                     "pt": "Os KPIs desta execução foram propostos automaticamente (o YAML não declara nenhum): revise-os e deixe-os escritos."},
     "h_target": {"es": "Objetivos de ML candidatos", "en": "Candidate ML targets", "pt": "Alvos de ML candidatos"},
+    # --- login (sólo aparece cuando el despliegue declara usuarios) ---
+    "auth_title": {"es": "Iniciar sesión", "en": "Sign in", "pt": "Entrar"},
+    "auth_intro": {"es": "Este despliegue pide usuario y contraseña. Pedíselas a quien administra el servidor.",
+                   "en": "This deployment requires a user and password. Ask whoever administers the server.",
+                   "pt": "Esta implantação exige usuário e senha. Peça a quem administra o servidor."},
+    "auth_user": {"es": "Usuario", "en": "User", "pt": "Usuário"},
+    "auth_password": {"es": "Contraseña", "en": "Password", "pt": "Senha"},
+    "auth_enter": {"es": "Entrar", "en": "Sign in", "pt": "Entrar"},
+    "auth_bad": {"es": "Usuario o contraseña incorrectos.", "en": "Wrong user or password.", "pt": "Usuário ou senha incorretos."},
+    "auth_locked": {"es": "Demasiados intentos fallidos. Reintentá en {segundos} segundos.",
+                    "en": "Too many failed attempts. Try again in {segundos} seconds.",
+                    "pt": "Tentativas demais. Tente de novo em {segundos} segundos."},
+    "auth_logout": {"es": "Cerrar sesión", "en": "Sign out", "pt": "Sair"},
+    "auth_as": {"es": "Sesión de {usuario}", "en": "Signed in as {usuario}", "pt": "Sessão de {usuario}"},
 }
 
 

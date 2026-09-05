@@ -13,6 +13,8 @@ Motor en `mvde/` (importable sin Streamlit), app en `app/app.py`, CLI `python -m
 | Nuevo proyecto desde un archivo | `python -m mvde nuevo datos.csv` |
 | Automatizar | `python -m mvde automatizar proyecto.yaml` (.bat + cron + DAG Airflow) |
 | Salud y mejoras sugeridas | `python -m mvde salud proyecto.yaml [--aplicar]` |
+| Credencial para el despliegue con login | `python -m mvde usuario <nombre>` |
+| Levantar en servidor | `docker compose up -d --build` (ver `docs/DESPLIEGUE.md`) |
 | Tests | `python -m pytest -q tests` |
 | Lint | `ruff check .` (config en la raíz del repo) |
 
@@ -24,4 +26,5 @@ Motor en `mvde/` (importable sin Streamlit), app en `app/app.py`, CLI `python -m
 - Las demos son 100 % sintéticas con semilla fija y defectos inyectados a propósito. La demo `kash` replica el ESQUEMA de un backtest real (calibrado con estadísticas agregadas); ninguna fila real entra al repo.
 - IA (`ia.py`): opcional y aditiva, claves sólo en sesión/entorno; el SQL que propone la IA se ejecuta sólo si es SELECT/WITH.
 - `salud.py` puntúa por área y sugiere parches al YAML; `aplicar` nunca muta el spec original.
+- `auth.py`: el login es OPCIONAL y se enciende solo si el despliegue declara `MVDE_USUARIOS` o `MVDE_USUARIOS_ARCHIVO`; sin eso el escritorio abre como siempre. PBKDF2-HMAC-SHA256 con sal por usuario, comparación en tiempo constante, cinco intentos y bloqueo. Falla CERRADO: variable declarada y credenciales ilegibles = nadie entra. No pasar hashes por un `.env` de Docker Compose: los interpola y los corta (ver `docs/DESPLIEGUE.md`).
 - `transformaciones.py` arma la bitácora (técnico / criollo / impacto por paso) desde `resultados` y el YAML; sus textos viven en `textos_transformaciones.py` (se mezclan en `i18n._T`, así el test de paridad los cubre). Exporta HTML / Word (python-docx) / PDF (reportlab); si falta una biblioteca lo dice, no rompe.

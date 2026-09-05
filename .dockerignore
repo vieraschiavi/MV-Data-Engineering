@@ -1,0 +1,11 @@
+.venv/
+.mvde_tmp/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.github/
+salidas/
+demo_mvde/
+*.duckdb
+*.parquet

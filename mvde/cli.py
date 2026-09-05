@@ -8,6 +8,7 @@
     python -m mvde automatizar proyecto.yaml           # .bat, cron y DAG
     python -m mvde validar proyecto.yaml
     python -m mvde salud proyecto.yaml [--aplicar]      # salud por área, sugerencias y (opcional) aplicarlas
+    python -m mvde usuario martin                       # línea de credencial para el despliegue con login
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import ETAPAS, __version__, automatizacion, demos, proyecto, salud
+from . import ETAPAS, __version__, auth, automatizacion, demos, proyecto, salud
 from .orquestador import Pipeline
 
 
@@ -42,9 +43,26 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("yaml")
     v = sub.add_parser("validar")
     v.add_argument("yaml")
+    u = sub.add_parser("usuario")
+    u.add_argument("nombre")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-5s | %(message)s")
 
+    if args.cmd == "usuario":
+        import getpass
+        clave = getpass.getpass("Contraseña (no se muestra): ")
+        if clave != getpass.getpass("Repetila: "):
+            print("Las contraseñas no coinciden.", file=sys.stderr)
+            return 1
+        try:
+            linea = f"{args.nombre.strip().lower()}:{auth.hashear(clave)}"
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print("\nPegá esta línea en MVDE_USUARIOS (varias se separan con «;»):\n")
+        print(linea)
+        print("\nLa contraseña no queda guardada en ningún lado: sólo su hash.")
+        return 0
     if args.cmd == "validar":
         spec = proyecto.cargar(args.yaml)
         print(f"OK: «{spec['nombre']}» · {len(spec['fuentes'])} fuentes · {len(spec['calidad'].get('reglas', []))} reglas · {len(spec['kpis'])} KPIs")

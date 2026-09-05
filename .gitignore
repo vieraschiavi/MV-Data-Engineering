@@ -7,3 +7,12 @@ demo_mvde/
 *.duckdb
 *.duckdb.wal
 .env
+
+# Despliegue en servidor: credenciales y datos del cliente nunca se versionan.
+# Se excluye el CONTENIDO, no la carpeta: con `secretos/` git ni entra a
+# mirarla y el `!` de abajo no puede reincluir nada.
+secretos/*
+!secretos/usuarios.txt.ejemplo
+datos/*
+!datos/.gitkeep
+.env

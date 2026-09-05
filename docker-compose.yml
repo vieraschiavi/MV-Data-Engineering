@@ -1,0 +1,33 @@
+# © 2026 Martín Viera. Todos los derechos reservados.
+# MV Data Engineering · despliegue en una VM. `docker compose up -d` y listo.
+services:
+  mvde:
+    build: .
+    image: mv-data-engineering:1.0.0
+    container_name: mvde
+    restart: unless-stopped
+    # Sólo al localhost de la VM: el reverse proxy (nginx/Traefik) es el que
+    # publica el puerto con HTTPS. Para probar sin proxy: "8501:8501".
+    ports:
+      - "127.0.0.1:8501:8501"
+    environment:
+      # Las credenciales van en un ARCHIVO, no en una variable de este compose.
+      # Verificado: un hash pegado en .env se corta solo. Compose interpola el
+      # último tramo (`$bf59...`) como si fuera una variable, la encuentra vacía
+      # y la borra, así que el contenedor arranca con la credencial mutilada y
+      # nadie entra, sin un solo mensaje de error. Con el archivo montado el
+      # hash no pasa nunca por la interpolación.
+      MVDE_USUARIOS_ARCHIVO: /run/secretos/usuarios.txt
+      # Contraseña de la base, si el proyecto declara una fuente SQL. Sin `$`
+      # adentro, o va también a un archivo.
+      DB_PASSWORD: "${DB_PASSWORD:-}"
+    volumes:
+      # Una línea por usuario, generada con `python -m mvde usuario <nombre>`.
+      # Sólo lectura: el contenedor no tiene por qué poder editarla.
+      - ./secretos/usuarios.txt:/run/secretos/usuarios.txt:ro
+      # Los proyectos y sus salidas viven fuera del contenedor: se puede
+      # actualizar la imagen sin perder nada.
+      - ./datos:/datos
+    # Un pipeline con ML sobre cientos de miles de filas necesita aire; el
+    # tope evita que se lleve puesta la VM entera.
+    mem_limit: 4g

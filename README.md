@@ -80,14 +80,35 @@ powerbi: {generar: true, nombre: Cobranzas}
 Las dos demos (`mvde/demos.py`) son el YAML completo de referencia: datos 100 %
 sintéticos con defectos inyectados a propósito para que el gate tenga algo que decir.
 
+## En un servidor (sin instalar nada en las PC)
+
+Cuando la política de la empresa prohíbe instalar programas, o el equipo es de
+varias personas, la app se publica en una VM y cada uno entra por el navegador.
+
+```bash
+mkdir -p secretos datos
+python3 -m mvde usuario martin >> secretos/usuarios.txt   # pide la clave sin mostrarla
+docker compose up -d --build
+```
+
+El login se enciende solo cuando hay usuarios declarados: en el escritorio
+(`run.sh`, el `.bat`) sigue abriendo sin pedir nada. Las contraseñas se guardan
+como PBKDF2-HMAC-SHA256 con sal por usuario, cinco intentos fallidos bloquean
+cinco minutos, y las credenciales van en un archivo montado que Docker Compose
+nunca interpola. La guía completa para el área de infraestructura, con
+requisitos, HTTPS, cuenta de base de sólo lectura y solución de problemas, está
+en [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
+
 ## Estructura
 
 ```
 mv-data-engineering/
 ├── mvde/            motor: proyecto · fuentes · bronze · silver · calidad · gold · almacen · gobernanza ·
-│                    ml · reporte · dax · powerbi · ia · justificacion · salud · transformaciones · orquestador · automatizacion · demos · cli · i18n
+│                    ml · reporte · dax · powerbi · ia · justificacion · salud · transformaciones · auth · orquestador · automatizacion · demos · cli · i18n
 ├── app/app.py       programa Streamlit (ES/EN/PT), misma familia visual que MV Data Governance
-├── tests/           37 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación, salud, transformaciones
+├── tests/           46 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación, salud, transformaciones, login
+├── docs/DESPLIEGUE.md  puesta en marcha en servidor (para infraestructura del cliente)
+├── Dockerfile · docker-compose.yml   despliegue en VM: la gente entra por navegador
 ├── run.sh · MV_DataEngineering.bat · requirements.txt · CLAUDE.md
 ```
 
