@@ -1,0 +1,127 @@
+# © 2026 Martín Viera. Todos los derechos reservados.
+"""Textos de cara al usuario en ES / EN / PT. Toda clave existe en los tres
+idiomas; ``tests/test_i18n.py`` verifica la paridad."""
+from __future__ import annotations
+
+LANGS = ["es", "en", "pt"]
+LANG_NAMES = {"es": "Español", "en": "English", "pt": "Português"}
+DEFAULT_LANG = "es"
+
+_T: dict[str, dict[str, str]] = {
+    "app_title": {"es": "MV Data Engineering", "en": "MV Data Engineering", "pt": "MV Data Engineering"},
+    "app_tagline": {"es": "Cualquier proyecto de datos, de la fuente al reporte final, por etapas y sin fallas silenciosas",
+                    "en": "Any data project, from source to final report, stage by stage and with no silent failures",
+                    "pt": "Qualquer projeto de dados, da fonte ao relatório final, por etapas e sem falhas silenciosas"},
+    "language": {"es": "Idioma", "en": "Language", "pt": "Idioma"},
+    "sidebar_help": {"es": "Declarás el proyecto en un YAML (fuentes, capas, calidad, modelo, KPIs) y el motor lo corre etapa por etapa con evidencia.",
+                     "en": "Declare the project in a YAML (sources, layers, quality, model, KPIs) and the engine runs it stage by stage with evidence.",
+                     "pt": "Você declara o projeto em um YAML (fontes, camadas, qualidade, modelo, KPIs) e o motor o executa etapa por etapa com evidência."},
+    "demo_note": {"es": "Las demos usan datos 100% sintéticos.", "en": "Demos use 100% synthetic data.", "pt": "As demos usam dados 100% sintéticos."},
+    "project": {"es": "Proyecto", "en": "Project", "pt": "Projeto"},
+    "project_demo": {"es": "Demo incluida", "en": "Bundled demo", "pt": "Demo incluída"},
+    "project_upload": {"es": "Subir un proyecto (.yaml)", "en": "Upload a project (.yaml)", "pt": "Enviar um projeto (.yaml)"},
+    "project_new": {"es": "Nuevo desde un archivo de datos", "en": "New from a data file", "pt": "Novo a partir de um arquivo de dados"},
+    "project_source_pick": {"es": "Elegí la demo", "en": "Pick the demo", "pt": "Escolha a demo"},
+    "run_all": {"es": "▶ Correr todo el pipeline", "en": "▶ Run the whole pipeline", "pt": "▶ Executar todo o pipeline"},
+    "run_stage": {"es": "Correr esta etapa", "en": "Run this stage", "pt": "Executar esta etapa"},
+    "run_from": {"es": "Correr desde acá", "en": "Run from here", "pt": "Executar a partir daqui"},
+    "status_ok": {"es": "OK", "en": "OK", "pt": "OK"},
+    "status_fail": {"es": "FALLÓ", "en": "FAILED", "pt": "FALHOU"},
+    "status_skip": {"es": "OMITIDA", "en": "SKIPPED", "pt": "OMITIDA"},
+    "status_pending": {"es": "PENDIENTE", "en": "PENDING", "pt": "PENDENTE"},
+    "evidence": {"es": "Evidencia", "en": "Evidence", "pt": "Evidência"},
+    "artifacts": {"es": "Artefactos", "en": "Artifacts", "pt": "Artefatos"},
+    "download": {"es": "Descargar", "en": "Download", "pt": "Baixar"},
+    "summary": {"es": "Resumen", "en": "Summary", "pt": "Resumo"},
+    "yaml_editor": {"es": "Definición del proyecto (YAML)", "en": "Project definition (YAML)", "pt": "Definição do projeto (YAML)"},
+    "yaml_apply": {"es": "Aplicar cambios", "en": "Apply changes", "pt": "Aplicar alterações"},
+    "yaml_invalid": {"es": "El YAML no es válido", "en": "The YAML is not valid", "pt": "O YAML não é válido"},
+    "gate_stopped": {"es": "El pipeline se detuvo en la etapa «{etapa}»: {motivo}",
+                     "en": "The pipeline stopped at stage “{etapa}”: {motivo}",
+                     "pt": "O pipeline parou na etapa «{etapa}»: {motivo}"},
+    "all_ok": {"es": "Las {n} etapas terminaron bien en {seg:.1f} s", "en": "All {n} stages finished in {seg:.1f} s", "pt": "As {n} etapas terminaram bem em {seg:.1f} s"},
+    "tab_pipeline": {"es": "Pipeline", "en": "Pipeline", "pt": "Pipeline"},
+    "tab_project": {"es": "Proyecto", "en": "Project", "pt": "Projeto"},
+    "tab_data": {"es": "Datos", "en": "Data", "pt": "Dados"},
+    "tab_automation": {"es": "Automatización", "en": "Automation", "pt": "Automação"},
+    "tab_help": {"es": "Ayuda", "en": "Help", "pt": "Ajuda"},
+    "automation_intro": {"es": "El mismo proyecto corre solo: por línea de comandos, con el Programador de tareas de Windows, con cron, o como DAG de Airflow. Los tres archivos se generan desde el YAML.",
+                         "en": "The same project runs unattended: from the command line, Windows Task Scheduler, cron, or as an Airflow DAG. The three files are generated from the YAML.",
+                         "pt": "O mesmo projeto roda sozinho: por linha de comando, Agendador de Tarefas do Windows, cron ou como DAG do Airflow. Os três arquivos são gerados a partir do YAML."},
+    "help_text": {"es": "1. Elegí una demo o subí tu YAML. 2. Corré todo. 3. Cada etapa muestra qué hizo y qué archivos dejó. 4. Si una falla, las siguientes no corren: arreglá el YAML y corré desde esa etapa.",
+                  "en": "1. Pick a demo or upload your YAML. 2. Run everything. 3. Each stage shows what it did and which files it left. 4. If one fails the next ones do not run: fix the YAML and run from that stage.",
+                  "pt": "1. Escolha uma demo ou envie seu YAML. 2. Execute tudo. 3. Cada etapa mostra o que fez e quais arquivos deixou. 4. Se uma falhar, as seguintes não rodam: corrija o YAML e execute a partir dessa etapa."},
+    "tables_loaded": {"es": "Tablas cargadas", "en": "Tables loaded", "pt": "Tabelas carregadas"},
+    "rows": {"es": "Filas", "en": "Rows", "pt": "Linhas"},
+    "columns": {"es": "Columnas", "en": "Columns", "pt": "Colunas"},
+    "layer": {"es": "Capa", "en": "Layer", "pt": "Camada"},
+    "preview": {"es": "Vista previa", "en": "Preview", "pt": "Pré-visualização"},
+    "quality_score": {"es": "Puntaje de calidad", "en": "Quality score", "pt": "Pontuação de qualidade"},
+    "kpis": {"es": "KPIs", "en": "KPIs", "pt": "KPIs"},
+    "no_project": {"es": "Todavía no hay un proyecto cargado.", "en": "No project loaded yet.", "pt": "Nenhum projeto carregado ainda."},
+    "new_project_hint": {"es": "Subí un CSV/Excel/Parquet: se genera un YAML con tipado automático, reglas de calidad sugeridas, calendario y KPIs básicos. Después lo editás.",
+                         "en": "Upload a CSV/Excel/Parquet: a YAML is generated with automatic typing, suggested quality rules, a calendar and basic KPIs. Then you edit it.",
+                         "pt": "Envie um CSV/Excel/Parquet: um YAML é gerado com tipagem automática, regras de qualidade sugeridas, calendário e KPIs básicos. Depois você o edita."},
+    "cli_hint": {"es": "Línea de comandos", "en": "Command line", "pt": "Linha de comando"},
+    # nombres de etapas
+    "st_fuentes": {"es": "1 · Fuentes", "en": "1 · Sources", "pt": "1 · Fontes"},
+    "st_bronze": {"es": "2 · Bronze", "en": "2 · Bronze", "pt": "2 · Bronze"},
+    "st_silver": {"es": "3 · Silver", "en": "3 · Silver", "pt": "3 · Silver"},
+    "st_calidad": {"es": "4 · Calidad", "en": "4 · Quality", "pt": "4 · Qualidade"},
+    "st_gold": {"es": "5 · Gold", "en": "5 · Gold", "pt": "5 · Gold"},
+    "st_almacen": {"es": "6 · Almacén", "en": "6 · Warehouse", "pt": "6 · Armazém"},
+    "st_gobernanza": {"es": "7 · Gobernanza", "en": "7 · Governance", "pt": "7 · Governança"},
+    "st_ml": {"es": "8 · ML", "en": "8 · ML", "pt": "8 · ML"},
+    "st_reporte": {"es": "9 · Reporte", "en": "9 · Report", "pt": "9 · Relatório"},
+    "st_dax": {"es": "10 · DAX", "en": "10 · DAX", "pt": "10 · DAX"},
+    "st_powerbi": {"es": "11 · Power BI", "en": "11 · Power BI", "pt": "11 · Power BI"},
+    "st_entrega": {"es": "12 · Entrega", "en": "12 · Delivery", "pt": "12 · Entrega"},
+    # descripciones de etapas
+    "d_fuentes": {"es": "Lee cada fuente declarada (CSV, Excel, Parquet, JSON, SQLite, SQL, URL, nube, Kaggle) y registra procedencia y hash.",
+                  "en": "Reads every declared source (CSV, Excel, Parquet, JSON, SQLite, SQL, URL, cloud, Kaggle) and records provenance and hash.",
+                  "pt": "Lê cada fonte declarada (CSV, Excel, Parquet, JSON, SQLite, SQL, URL, nuvem, Kaggle) e registra procedência e hash."},
+    "d_bronze": {"es": "Guarda el crudo tal cual, en Parquet, con columnas de linaje. Idempotente.",
+                 "en": "Stores the raw data untouched as Parquet with lineage columns. Idempotent.",
+                 "pt": "Guarda o bruto tal como veio, em Parquet, com colunas de linhagem. Idempotente."},
+    "d_silver": {"es": "Tipa, renombra, decodifica, deduplica, despivotea y deriva columnas según el YAML (o automático).",
+                 "en": "Types, renames, decodes, deduplicates, unpivots and derives columns per the YAML (or automatically).",
+                 "pt": "Tipa, renomeia, decodifica, deduplica, despivota e deriva colunas conforme o YAML (ou automático)."},
+    "d_calidad": {"es": "Corre las reglas de calidad por dimensión. Un fallo crítico corta el pipeline.",
+                  "en": "Runs the quality rules per dimension. A critical failure stops the pipeline.",
+                  "pt": "Executa as regras de qualidade por dimensão. Uma falha crítica interrompe o pipeline."},
+    "d_gold": {"es": "Construye el modelo estrella: dimensiones (SCD 1/2), calendario, hechos con claves surrogadas.",
+               "en": "Builds the star schema: dimensions (SCD 1/2), calendar, facts with surrogate keys.",
+               "pt": "Constrói o modelo estrela: dimensões (SCD 1/2), calendário, fatos com chaves substitutas."},
+    "d_almacen": {"es": "Carga gold en DuckDB, crea las vistas y, si se pide, publica en SQL Server/PostgreSQL.",
+                  "en": "Loads gold into DuckDB, creates the views and, if asked, publishes to SQL Server/PostgreSQL.",
+                  "pt": "Carrega gold no DuckDB, cria as vistas e, se pedido, publica no SQL Server/PostgreSQL."},
+    "d_gobernanza": {"es": "Catálogo, diccionario de datos, linaje fuente→reporte, PII y puntaje por dimensión.",
+                     "en": "Catalog, data dictionary, source→report lineage, PII and score per dimension.",
+                     "pt": "Catálogo, dicionário de dados, linhagem fonte→relatório, PII e pontuação por dimensão."},
+    "d_ml": {"es": "Modelo de clasificación/regresión con corte temporal honesto, métricas y chequeo de fuga. Opcional.",
+             "en": "Classification/regression model with an honest temporal split, metrics and leakage check. Optional.",
+             "pt": "Modelo de classificação/regressão com corte temporal honesto, métricas e verificação de vazamento. Opcional."},
+    "d_reporte": {"es": "KPIs, gráficos y reporte Excel + HTML con los números del almacén.",
+                  "en": "KPIs, charts and an Excel + HTML report with the warehouse numbers.",
+                  "pt": "KPIs, gráficos e relatório Excel + HTML com os números do armazém."},
+    "d_dax": {"es": "Biblioteca de medidas DAX generada desde los KPIs (DIVIDE, KEEPFILTERS, time intelligence).",
+              "en": "DAX measure library generated from the KPIs (DIVIDE, KEEPFILTERS, time intelligence).",
+              "pt": "Biblioteca de medidas DAX gerada a partir dos KPIs (DIVIDE, KEEPFILTERS, time intelligence)."},
+    "d_powerbi": {"es": "Archivo .pbit y proyecto PBIP con el modelo, las medidas y el tablero, vía MV DAX Lab.",
+                  "en": ".pbit file and PBIP project with the model, measures and dashboard, via MV DAX Lab.",
+                  "pt": "Arquivo .pbit e projeto PBIP com o modelo, as medidas e o painel, via MV DAX Lab."},
+    "d_entrega": {"es": "Manifiesto de la corrida, índice de artefactos y resumen ejecutivo en Markdown.",
+                  "en": "Run manifest, artifact index and executive summary in Markdown.",
+                  "pt": "Manifesto da execução, índice de artefatos e resumo executivo em Markdown."},
+}
+
+
+def t(key: str, lang: str = DEFAULT_LANG) -> str:
+    entry = _T.get(key)
+    if not entry:
+        return key
+    return entry.get(lang) or entry.get(DEFAULT_LANG) or key
+
+
+def all_keys() -> list[str]:
+    return sorted(_T)

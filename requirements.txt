@@ -1,0 +1,19 @@
+# MV Data Engineering · dependencias (Python 3.11+). Topes de versión mayor a propósito.
+streamlit>=1.37,<2
+pandas>=2.0,<4
+numpy>=1.24,<3
+pyarrow>=14.0,<26
+duckdb>=1.0,<2
+pyyaml>=6.0,<7
+matplotlib>=3.8,<4
+openpyxl>=3.1,<4
+xlsxwriter>=3.1,<4
+scikit-learn>=1.4,<2
+sqlalchemy>=2.0,<3
+# --- tests ---
+pytest>=8.0,<9
+# --- opcionales, según la fuente que uses ---
+#   kaggle                      fuentes tipo `kaggle`
+#   psycopg2-binary / pymysql / pyodbc / oracledb   fuentes `sql` y publicación
+#   s3fs / adlfs / gcsfs        rutas s3:// az:// gs:// en fuentes de archivo
+#   apache-airflow              para correr el DAG generado

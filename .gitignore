@@ -1,0 +1,9 @@
+.venv/
+.mvde_tmp/
+__pycache__/
+.pytest_cache/
+salidas/
+demo_mvde/
+*.duckdb
+*.duckdb.wal
+.env
