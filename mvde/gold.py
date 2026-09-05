@@ -38,6 +38,10 @@ def dimension(df: pd.DataFrame, cfg: dict, existente: pd.DataFrame | None = None
         return base
     hoy = pd.Timestamp(a_fecha or date.today())
     base["attr_hash"] = _hash_attrs(base, attrs) if attrs else ""
+    # Una tabla previa sin columnas de historia (venía como SCD 1) no sirve de base:
+    # la historia arranca en esta corrida en vez de romper con KeyError.
+    if existente is not None and not {"is_current", "version", "attr_hash"} <= set(existente.columns):
+        existente = None
     if existente is None or existente.empty:
         base["valid_from"], base["valid_to"], base["is_current"], base["version"] = hoy, LEJANO, True, 1
         dim = base

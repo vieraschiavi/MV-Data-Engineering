@@ -7,6 +7,7 @@
     python -m mvde nuevo datos.csv [--nombre ventas]   # esqueleto de YAML desde un archivo
     python -m mvde automatizar proyecto.yaml           # .bat, cron y DAG
     python -m mvde validar proyecto.yaml
+    python -m mvde salud proyecto.yaml [--aplicar]      # salud por área, sugerencias y (opcional) aplicarlas
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import ETAPAS, __version__, automatizacion, demos, proyecto
+from . import ETAPAS, __version__, automatizacion, demos, proyecto, salud
 from .orquestador import Pipeline
 
 
@@ -73,6 +74,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"generados en {base}: correr_pipeline.bat · crontab.txt · dag_airflow.py")
         return 0
     p = Pipeline.desde_yaml(args.yaml)
+    if args.cmd == "salud":
+        p._rehidratar("entrega")
+        ev = salud.evaluar(p)
+        print(f"salud total {ev['total']}/100 · " + " · ".join(f"{k} {v['puntaje']}" for k, v in ev["areas"].items()))
+        sugs = salud.sugerencias(p)
+        for sg in sugs:
+            print(f"  [{sg['severidad']:5}] {sg['area']:10} {sg['titulo']}" + ("" if sg["aplicable"] else "  (manual)"))
+        if args.aplicar:
+            nuevo, n = salud.aplicar_todas(p.spec, sugs)
+            proyecto.guardar(nuevo, args.yaml)
+            print(f"{n} mejoras aplicadas a {args.yaml}; corré de nuevo para ver el después")
+        return 0
     if args.cmd == "etapa":
         if args.etapa != "fuentes":
             p._rehidratar(args.etapa)

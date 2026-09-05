@@ -57,6 +57,22 @@ def formatear(valor, formato: str | None) -> str:
     return f"{valor:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def kpis_automaticos(gold: dict[str, pd.DataFrame], maximo: int = 8) -> list[dict]:
+    """Cuando el YAML no declara KPIs: conteo de cada hecho y suma de sus
+    columnas numéricas que no son claves. Es un punto de partida, no el final."""
+    out = []
+    for nombre, df in gold.items():
+        if nombre.startswith("dim_") or nombre == "ml_scores":
+            continue
+        out.append({"nombre": f"{nombre} · filas", "tabla": nombre, "agregacion": "count", "formato": "#,0"})
+        for c in df.columns:
+            if pd.api.types.is_numeric_dtype(df[c]) and not c.endswith("_key") and not pd.api.types.is_bool_dtype(df[c]) and df[c].nunique() > 2:
+                out.append({"nombre": f"{c} · total", "tabla": nombre, "columna": c, "agregacion": "sum", "formato": "#,0"})
+            if len(out) >= maximo:
+                return out
+    return out[:maximo]
+
+
 def calcular_kpis(spec: dict, ruta_db: Path) -> list[dict]:
     out = []
     for k in spec.get("kpis") or []:

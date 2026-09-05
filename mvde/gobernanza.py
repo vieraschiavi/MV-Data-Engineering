@@ -7,6 +7,33 @@ import re
 
 import pandas as pd
 
+# Columnas que fabrica el motor (claves surrogadas, historia SCD 2, calendario):
+# vienen documentadas de fábrica, así la cobertura mide lo que el negocio debe escribir.
+_TECNICAS = {
+    "valid_from": "SCD 2 · desde cuándo rige esta versión de la fila",
+    "valid_to": "SCD 2 · hasta cuándo rigió (9999-12-31 = vigente)",
+    "is_current": "SCD 2 · True en la versión vigente",
+    "version": "SCD 2 · número de versión de la clave natural",
+    "attr_hash": "SCD 2 · hash de los atributos, detecta cambios",
+    "fecha_key": "Clave del calendario (AAAAMMDD)",
+    "fecha": "Fecha calendario (una fila por día)",
+    "anio": "Año", "trimestre": "Trimestre (T1..T4)", "mes_nro": "Número de mes", "mes": "Mes abreviado",
+    "anio_mes": "Año-mes (AAAA-MM)", "anio_mes_orden": "Orden numérico del año-mes",
+    "dia_semana": "Día de la semana abreviado", "es_fin_de_semana": "True sábado y domingo",
+    "_ingestado_en": "Bronze · momento de la ingesta (UTC)", "_fuente": "Bronze · archivo o consulta de origen", "_hash_fuente": "Bronze · hash del archivo de origen",
+}
+
+
+def descripcion_tecnica(tabla: str, col: str) -> str:
+    if col.endswith("_key"):
+        return "Clave surrogada de " + col[:-4] if not tabla.startswith("dim_") or col != f"{tabla}_key" else "Clave surrogada de la dimensión"
+    if col.endswith("_hash"):
+        return _TECNICAS["attr_hash"]
+    if tabla in ("dim_calendario", "calendario") or col in ("valid_from", "valid_to", "is_current", "version", "attr_hash", "_ingestado_en", "_fuente", "_hash_fuente"):
+        return _TECNICAS.get(col, "")
+    return ""
+
+
 _PII = re.compile(r"(dni|cuit|cuil|cpf|ssn|documento|email|mail|telefono|tel[eé]fono|phone|celular|direccion|address|nombre|apellido|name|surname|tarjeta|card)", re.I)
 
 
@@ -24,7 +51,7 @@ def catalogo(capas: dict[str, dict[str, pd.DataFrame]], spec: dict) -> pd.DataFr
                     "distintos": int(s.nunique(dropna=True)),
                     "es_clave": bool(col.endswith("_key") or col.startswith("id_") or col.lower() == "id"),
                     "pii": bool(col in pii_declaradas or f"{tabla}.{col}" in pii_declaradas or _PII.search(col)),
-                    "descripcion": descripciones.get(f"{tabla}.{col}", descripciones.get(col, "")),
+                    "descripcion": descripciones.get(f"{tabla}.{col}", descripciones.get(col, "")) or descripcion_tecnica(tabla, col),
                 })
     return pd.DataFrame(filas)
 

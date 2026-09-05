@@ -22,7 +22,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, ia, justificacion, proyecto  # noqa: E402
+from mvde import APP_NAME, BRAND, ETAPAS, __version__, automatizacion, demos, ia, justificacion, proyecto, salud  # noqa: E402
 from mvde.i18n import LANG_NAMES, LANGS, t  # noqa: E402
 from mvde.orquestador import Pipeline  # noqa: E402
 
@@ -135,8 +135,8 @@ if p is None:
     st.info(t("no_project", lang))
     st.stop()
 
-tab_pipe, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_auto, tab_help = st.tabs([
-    t("tab_pipeline", lang), t("tab_sources", lang), t("tab_project", lang), t("tab_data", lang), t("tab_ai", lang),
+tab_pipe, tab_health, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_auto, tab_help = st.tabs([
+    t("tab_pipeline", lang), t("tab_health", lang), t("tab_sources", lang), t("tab_project", lang), t("tab_data", lang), t("tab_ai", lang),
     t("tab_rationale", lang), t("tab_automation", lang), t("tab_help", lang)])
 
 
@@ -146,6 +146,71 @@ def _guardar_spec(spec: dict) -> None:
     proyecto.guardar(spec, ruta)
     _cargar_desde_yaml(ruta)
 
+
+# ----------------------------------------------------------------- salud
+ETAPA_DE_AREA = {"datos": "silver", "calidad": "calidad", "modelo": "gold", "gobernanza": "gobernanza", "bi": "reporte", "ml": "ml"}
+
+
+def _aplicar_y_correr(sugs: list[dict]) -> int:
+    nuevo, n = salud.aplicar_todas(p.spec, sugs)
+    if n:
+        _guardar_spec(nuevo)
+        p2 = _pipeline()
+        desde = min((ETAPAS.index(ETAPA_DE_AREA.get(sg["area"], "silver")) for sg in sugs if sg.get("aplicable")), default=0)
+        p2._rehidratar(ETAPAS[desde])
+        p2.correr(desde=ETAPAS[desde])
+    return n
+
+
+with tab_health:
+    st.markdown(t("h_intro", lang))
+    if not p.resultados:
+        st.info(t("status_pending", lang))
+    else:
+        ev = salud.evaluar(p)
+        cols = st.columns(len(ev["areas"]) + 1)
+        cols[0].metric(t("h_total", lang), f"{ev['total']}")
+        for i, (a, v) in enumerate(ev["areas"].items(), 1):
+            cols[i].metric(a, f"{v['puntaje']}", help=v["detalle"])
+        ad = salud.antes_despues(p)
+        if ad:
+            st.markdown(f"**{t('h_before', lang)} → {t('h_after', lang)}** · {ad['antes']['fecha'][:16]} → {ad['despues']['fecha'][:16]} · "
+                        f"{t('h_total', lang)}: {ad['antes']['total']} → {ad['despues']['total']} ({'+' if ad['delta_total'] >= 0 else ''}{ad['delta_total']})")
+            st.dataframe(pd.DataFrame(ad["areas"]).rename(columns={"area": t("h_area", lang), "antes": t("h_before", lang), "despues": t("h_after", lang), "delta": t("h_delta", lang)}),
+                         use_container_width=True, hide_index=True)
+        else:
+            st.caption(t("h_no_history", lang))
+        hist = salud.historial(p)
+        if len(hist) >= 2:
+            st.line_chart(pd.DataFrame([{"fecha": h["fecha"][:16], "total": h["total"], **h["areas"]} for h in hist]).set_index("fecha"))
+        if p.spec.get("_kpis_automaticos"):
+            st.warning(t("h_auto_kpis", lang))
+        st.divider()
+        sugs = salud.sugerencias(p)
+        st.markdown(f"### {t('h_suggestions', lang)} · {len(sugs)}")
+        if not sugs:
+            st.success(t("h_none", lang))
+        else:
+            if any(x["aplicable"] for x in sugs) and st.button(t("h_apply_all", lang), type="primary", key="h_apply_all"):
+                with st.spinner("…"):
+                    n = _aplicar_y_correr(sugs)
+                st.success(t("h_applied", lang).format(n=n))
+                st.rerun()
+            for i, sg in enumerate(sugs):
+                c1, c2 = st.columns([6, 1])
+                sev = t(f"h_sev_{sg['severidad']}", lang)
+                c1.markdown(f"<div class='mv-etapa mv-{'fallo' if sg['severidad'] == 'alta' else 'omitida' if sg['severidad'] == 'media' else 'ok'}'>"
+                            f"<b>{sg['titulo']}</b> · <small>{sg['area']} · {sev}{'' if sg['aplicable'] else ' · ' + t('h_manual', lang)}</small><br><small>{sg['detalle']}</small></div>",
+                            unsafe_allow_html=True)
+                if sg["aplicable"] and c2.button(t("h_apply", lang), key=f"h_apply_{i}"):
+                    with st.spinner("…"):
+                        _aplicar_y_correr([sg])
+                    st.rerun()
+        if not p.spec.get("ml") and p.gold:
+            cands = [{"tabla": tn, **c} for tn, df in p.gold.items() if not tn.startswith("dim_") for c in salud.sugerir_target(df)[:3]]
+            if cands:
+                st.markdown(f"**{t('h_target', lang)}**")
+                st.dataframe(pd.DataFrame(cands), use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------- fuentes
 with tab_src:

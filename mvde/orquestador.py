@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import ETAPAS, __version__
-from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, silver
+from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, salud, silver
 
 log = logging.getLogger("mvde")
 OPCIONALES = {"ml", "powerbi"}
@@ -63,6 +63,7 @@ class Pipeline:
         self.catalogo = pd.DataFrame()
         self.ml: dict | None = None
         self.medidas: list[dict] = []
+        self.salud: dict = {}
         self.resultados: dict[str, Resultado] = {}
         self._cargar_estado()
 
@@ -290,6 +291,11 @@ class Pipeline:
         if not self.ruta_db.exists():
             raise RuntimeError("no hay almacén")
         self.dirs["reporte"].mkdir(parents=True, exist_ok=True)
+        if not self.spec.get("kpis"):
+            # Sin KPIs declarados el reporte no puede quedar vacío: se proponen desde gold
+            # (y la pestaña Salud sugiere dejarlos escritos en el YAML).
+            self.spec["kpis"] = reporte.kpis_automaticos(self.gold)
+            self.spec["_kpis_automaticos"] = True
         self.kpis = reporte.calcular_kpis(self.spec, self.ruta_db)
         malos = [k for k in self.kpis if not k["ok"]]
         if malos and len(malos) == len(self.kpis) and self.kpis:
@@ -352,6 +358,10 @@ class Pipeline:
         lineas += ["", "## Artefactos", ""] + [f"- `{a}`" for e, r in self.resultados.items() for a in r.artefactos]
         p2 = self.dirs["entrega"] / "RESUMEN.md"
         p2.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+        # Salud de la corrida (por área) e historial para el antes/después.
+        self.salud = salud.evaluar(self)
+        reporte.guardar_json(self.dirs["entrega"] / "salud.json", self.salud)
+        salud.registrar(self, self.salud)
         # La justificación etapa por etapa, para técnicos y gerencia, en el idioma del proyecto y en inglés.
         idioma = self.spec.get("idioma", "es")
         for lang in dict.fromkeys([idioma, "en"]):
@@ -362,8 +372,8 @@ class Pipeline:
                 shutil.copy(src, self.dirs["entrega"] / src.name)
         for p in list(self.dirs["powerbi"].glob("*.pbit")) + list(self.dirs["ml"].glob("cartera_priorizada.xlsx")):
             shutil.copy(p, self.dirs["entrega"] / p.name)
-        return Resultado("entrega", True, f"manifiesto + resumen + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos copiados",
-                         {"carpeta": str(self.dirs["entrega"])}, [str(p1), str(p2)])
+        return Resultado("entrega", True, f"salud {self.salud['total']}/100 · manifiesto + resumen + justificación + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos",
+                         {"carpeta": str(self.dirs["entrega"]), "salud": self.salud}, [str(p1), str(p2)])
 
 
 def _slug(txt: str) -> str:
