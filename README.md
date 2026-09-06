@@ -32,6 +32,8 @@ falla, las siguientes no corren y la evidencia dice por qué.
 
 - **Fuentes:** subís archivos (CSV, Excel, Parquet, JSON) o declarás una conexión SQL de sólo lectura (SQL Server, PostgreSQL, MySQL, SQLite, DuckDB); la contraseña se lee de una variable de entorno, nunca va al YAML.
 - **IA:** elegís proveedor (Claude, OpenAI, Gemini, Copilot/Azure, Groq, Mistral, DeepSeek, Ollama local) y modelo con tu propia clave, actualizás la lista de modelos desde la API del proveedor y preguntás en lenguaje natural: la IA propone una consulta, el motor la ejecuta en el almacén (sólo lectura) y la IA interpreta el resultado. Sin clave, el modo local responde con los KPIs, la calidad y el modelo.
+- **Relevamiento:** las 48 preguntas que hay que hacerle al cliente antes de escribir una línea de código, separadas por las 12 etapas del pipeline. Cada una trae **para qué sirve la respuesta** (qué decisión del pipeline depende de ella) y a qué rol preguntársela; se anota quién respondió, de qué área y qué dijo. Cuando la respuesta no alcanza para decidir, el casillero de **repreguntas** propone qué volver a preguntar: sin IA detecta la forma de la respuesta (vaga, sin número, nombra un sistema sin decir cómo se accede), y con IA agrega las específicas del tema. Las respuestas con una traducción única **se aplican al YAML** con un clic (dueño del dato, frecuencia, hora, PII). Export a Markdown, Excel y JSON.
+- **Reuniones:** de la reunión a la minuta. Tres entradas: la **transcripción que ya generó Teams, Zoom, Meet o WebEx** (`.vtt`, con hablante y minuto, sin necesidad de IA ni conexión), un **archivo de audio o video**, o el **micrófono** para la reunión presencial. La minuta sale por reglas —participantes y cuánto habló cada uno, decisiones, compromisos con su fecha, riesgos, preguntas abiertas y menciones por etapa del pipeline—, cada cosa con la cita y el minuto de donde salió; con IA se agrega un resumen ejecutivo por encima, nunca en lugar de la evidencia. Lo que se dijo en la reunión se propone como respuesta del relevamiento, para confirmar a mano.
 - **Cargas:** monitoreo de actualización tabla por tabla, con las dos fechas que suelen confundirse: hasta cuándo llega el **dato** y cuándo corrió la **carga**. Un proceso puntual puede traer información vieja, y así se ve. Semáforo por tabla (actualizada / atrasada / sin fecha / vacía), frecuencia esperada declarada en el YAML (`frescura`), frecuencia **real** medida sobre el historial de corridas, y `frescura.json` en cada entrega.
 - **Salud:** puntaje por área (datos, calidad, modelo, gobernanza, BI, ML), mejoras sugeridas con parche al YAML que se aplican con un clic, y el antes/después de cada corrida.
 - **Justificación:** para cada etapa, qué se hizo con los números de la corrida, la lectura técnica y la lectura gerencial. Se descarga en Markdown.
@@ -105,9 +107,10 @@ en [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
 ```
 mv-data-engineering/
 ├── mvde/            motor: proyecto · fuentes · bronze · silver · calidad · gold · almacen · gobernanza ·
-│                    ml · reporte · dax · powerbi · ia · justificacion · salud · frescura · transformaciones · auth · orquestador · automatizacion · demos · cli · i18n
+│                    ml · reporte · dax · powerbi · ia · justificacion · salud · frescura · relevamiento · reuniones ·
+│                    transformaciones · auth · orquestador · automatizacion · demos · cli · i18n
 ├── app/app.py       programa Streamlit (ES/EN/PT), misma familia visual que MV Data Governance
-├── tests/           55 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación, salud, cargas, transformaciones, login
+├── tests/           76 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación, salud, cargas, relevamiento, reuniones, transformaciones, login
 ├── docs/DESPLIEGUE.md  puesta en marcha en servidor (para infraestructura del cliente)
 ├── Dockerfile · docker-compose.yml   despliegue en VM: la gente entra por navegador
 ├── run.sh · MV_DataEngineering.bat · requirements.txt · CLAUDE.md

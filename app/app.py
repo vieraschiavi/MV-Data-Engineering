@@ -24,7 +24,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from mvde import APP_NAME, BRAND, ETAPAS, __version__, auth, automatizacion, demos, frescura, ia, justificacion, proyecto, salud, transformaciones  # noqa: E402
+from mvde import APP_NAME, BRAND, ETAPAS, __version__, auth, automatizacion, demos, frescura, ia, justificacion, proyecto, relevamiento, reuniones, salud, transformaciones  # noqa: E402
 from mvde.i18n import DEFAULT_LANG, LANG_NAMES, LANGS, t  # noqa: E402
 from mvde.orquestador import Pipeline  # noqa: E402
 
@@ -187,10 +187,23 @@ if p is None:
     st.info(t("no_project", lang))
     st.stop()
 
-tab_pipe, tab_health, tab_load, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_trans, tab_auto, tab_help = st.tabs([
-    t("tab_pipeline", lang), t("tab_health", lang), t("tab_loads", lang), t("tab_sources", lang), t("tab_project", lang),
-    t("tab_data", lang), t("tab_ai", lang), t("tab_rationale", lang), t("tab_transforms", lang),
+# El orden cuenta la historia del trabajo: primero se releva y se reúne uno con
+# el cliente, después se construye el pipeline, y al final se opera.
+(tab_pipe, tab_survey, tab_meet, tab_health, tab_load, tab_src, tab_proj,
+ tab_data, tab_ai, tab_just, tab_trans, tab_auto, tab_help) = st.tabs([
+    t("tab_pipeline", lang), t("tab_survey", lang), t("tab_meetings", lang), t("tab_health", lang),
+    t("tab_loads", lang), t("tab_sources", lang), t("tab_project", lang), t("tab_data", lang),
+    t("tab_ai", lang), t("tab_rationale", lang), t("tab_transforms", lang),
     t("tab_automation", lang), t("tab_help", lang)])
+
+
+def _ia_config() -> dict:
+    """Proveedor, modelo y clave que se hayan cargado en la pestaña IA. Las dos
+    pestañas nuevas usan la misma configuración: una sola clave para todo."""
+    prov = st.session_state.get("ai_prov", "")
+    return {"proveedor": prov, "modelo": st.session_state.get(f"ai_model_{prov}", ""),
+            "api_key": st.session_state.get("ai_key", "") or None,
+            "endpoint": st.session_state.get("ai_endpoint", "")}
 
 
 def _guardar_spec(spec: dict) -> None:
@@ -264,6 +277,230 @@ with tab_health:
             if cands:
                 st.markdown(f"**{t('h_target', lang)}**")
                 st.dataframe(pd.DataFrame(cands), use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------------------- relevamiento
+@st.cache_data(show_spinner=False, max_entries=8)
+def _excel_relevamiento(datos_json: str, lang: str) -> bytes:
+    """El botón de descarga necesita los bytes en cada render. Sin caché eso
+    escribía un .xlsx en un temporal nuevo cada vez que alguien tipeaba una
+    letra, y en un servidor que no se apaga eso se acumula."""
+    ruta = Path(tempfile.mkdtemp()) / "relevamiento.xlsx"
+    relevamiento.excel(ruta, json.loads(datos_json), lang)
+    datos = ruta.read_bytes()
+    ruta.unlink(missing_ok=True)
+    ruta.parent.rmdir()
+    return datos
+
+
+def _ruta_relevamiento() -> Path:
+    return relevamiento.ruta_de(p.spec)
+
+
+def _relevamiento() -> dict:
+    if "mvde_relev" not in st.session_state:
+        st.session_state["mvde_relev"] = relevamiento.cargar(_ruta_relevamiento())
+    return st.session_state["mvde_relev"]
+
+
+def _guardar_relevamiento(datos: dict) -> Path:
+    st.session_state["mvde_relev"] = datos
+    return relevamiento.guardar(datos, _ruta_relevamiento())
+
+
+with tab_survey:
+    st.markdown(t("rv_intro", lang))
+    datos_rv = _relevamiento()
+    c_cli, c_av = st.columns([2, 5])
+    cliente = c_cli.text_input(t("rv_client", lang), value=datos_rv.get("cliente", ""), key="rv_cliente")
+    if cliente != datos_rv.get("cliente", ""):
+        datos_rv = {**datos_rv, "cliente": cliente}
+        _guardar_relevamiento(datos_rv)
+    avance = relevamiento.avance(datos_rv, lang)
+    cerradas, total = sum(a["respondidas"] for a in avance), sum(a["total"] for a in avance)
+    c_av.markdown(f"**{t('rv_progress', lang)}** · {cerradas}/{total}")
+    c_av.progress(cerradas / total if total else 0.0)
+    st.dataframe(pd.DataFrame([{t("x_etapa", lang): a["titulo"], t("rv_answer", lang): a["respondidas"],
+                                "total": a["total"], "%": a["pct"]} for a in avance]),
+                 use_container_width=True, hide_index=True, height=210)
+    st.divider()
+
+    etapas_rv = list(relevamiento.por_etapa(lang))
+    c_e, c_f = st.columns([3, 2])
+    etapa_rv = c_e.selectbox(t("x_etapa", lang), etapas_rv, format_func=lambda e: t(f"st_{e}", lang), key="rv_etapa")
+    solo_faltan = c_f.checkbox(t("rv_filter_pending", lang), key="rv_faltan")
+    respuestas = datos_rv.get("respuestas") or {}
+    ESTADOS_RV = list(relevamiento.ESTADOS)
+    for q in relevamiento.por_etapa(lang)[etapa_rv]:
+        actual = respuestas.get(q["id"], {})
+        if solo_faltan and actual.get("estado") in ("respondida", "no_aplica"):
+            continue
+        icono = {"respondida": "✅", "no_aplica": "⏭️", "repreguntar": "🔁"}.get(actual.get("estado"), "⬜")
+        with st.expander(f"{icono} {q['pregunta']}", expanded=not actual.get("respuesta")):
+            st.caption(f"**{t('rv_why', lang)}** {q['porque']}  ·  **{t('rv_ask', lang)}** {q['rol_texto']}")
+            resp = st.text_area(t("rv_answer", lang), value=actual.get("respuesta", ""), key=f"rv_r_{q['id']}", height=90)
+            k1, k2, k3 = st.columns([2, 2, 2])
+            quien = k1.text_input(t("rv_who", lang), value=actual.get("responsable", ""), key=f"rv_q_{q['id']}")
+            area = k2.text_input(t("rv_area", lang), value=actual.get("area", ""), key=f"rv_a_{q['id']}")
+            estado = k3.selectbox(t("rv_state", lang), ESTADOS_RV, index=ESTADOS_RV.index(actual.get("estado", "pendiente")),
+                                  format_func=lambda e: t(f"rv_s_{e}", lang), key=f"rv_e_{q['id']}")
+            notas = st.text_input(t("rv_notes", lang), value=actual.get("notas", ""), key=f"rv_n_{q['id']}")
+            b1, b2, _b = st.columns([2, 2, 4])
+            if b1.button(t("rv_save", lang), key=f"rv_save_{q['id']}", type="primary"):
+                ruta_rv = _guardar_relevamiento(relevamiento.responder(datos_rv, q["id"], resp, quien, area, estado, notas))
+                st.success(t("rv_saved", lang).format(ruta=ruta_rv.name))
+                st.rerun()
+            if b2.button(t("rv_ask_ai", lang), key=f"rv_ai_{q['id']}"):
+                with st.spinner("…"):
+                    r = relevamiento.repreguntas(q["pregunta"], resp, q["porque"], quien, lang, **_ia_config())
+                _guardar_relevamiento(relevamiento.guardar_repreguntas(datos_rv, q["id"], r["repreguntas"]))
+                st.rerun()
+            pendientes = actual.get("repreguntas") or []
+            if pendientes:
+                st.markdown(f"**{t('rv_followups', lang)}**")
+                for x in pendientes:
+                    st.markdown(f"<div class='mv-etapa mv-omitida'><small>{html.escape(x)}</small></div>", unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown(f"### {t('rv_to_yaml', lang)}")
+    sugs_rv = relevamiento.sugerencias_yaml(datos_rv, lang)
+    if not sugs_rv:
+        st.caption(t("rv_to_yaml_none", lang))
+    for i, sg in enumerate(sugs_rv):
+        c1, c2 = st.columns([6, 1])
+        c1.markdown(f"<div class='mv-etapa mv-ok'><b>{sg['campo']}</b> = {html.escape(str(sg['valor']))}"
+                    f"<br><small>{sg['origen']}</small></div>", unsafe_allow_html=True)
+        if c2.button(t("rv_apply", lang), key=f"rv_ap_{i}"):
+            _guardar_spec(relevamiento.aplicar_sugerencia(p.spec, sg))
+            st.rerun()
+    st.divider()
+    st.markdown(f"**{t('rv_export', lang)}**")
+    e1, e2, e3 = st.columns(3)
+    e1.download_button("Markdown", relevamiento.markdown(datos_rv, lang).encode("utf-8"),
+                       file_name=f"RELEVAMIENTO_{lang}.md", key="dl_rv_md")
+    e2.download_button("Excel", _excel_relevamiento(json.dumps(datos_rv, ensure_ascii=False, sort_keys=True), lang),
+                       file_name=f"RELEVAMIENTO_{lang}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_rv_xlsx")
+    e3.download_button("JSON", json.dumps(datos_rv, ensure_ascii=False, indent=2).encode("utf-8"),
+                       file_name="relevamiento.json", mime="application/json", key="dl_rv_json")
+
+# ----------------------------------------------------------------- reuniones
+with tab_meet:
+    st.markdown(t("mt_intro", lang))
+    titulo_rn = st.text_input(t("mt_title", lang), key="mt_titulo")
+    origen = st.radio(t("mt_source", lang),
+                      ["mt_src_file", "mt_src_audio", "mt_src_mic", "mt_src_paste"],
+                      format_func=lambda k: t(k, lang), horizontal=True, key="mt_origen")
+    turnos = st.session_state.get("mvde_turnos") or []
+
+    def _cargar_turnos(nuevos: list, aviso: str = "") -> None:
+        st.session_state["mvde_turnos"] = nuevos
+        if aviso:
+            st.session_state["mvde_turnos_aviso"] = aviso
+
+    if origen == "mt_src_file":
+        st.caption(t("mt_file_hint", lang))
+        sub = st.file_uploader("VTT / SRT / TXT", type=list(reuniones.FORMATOS_TEXTO), key="mt_file")
+        if sub is not None and st.button(t("mt_build", lang), key="mt_b_file", type="primary"):
+            _cargar_turnos(reuniones.parsear(sub.getvalue().decode("utf-8", "ignore"), sub.name))
+            st.rerun()
+    elif origen == "mt_src_paste":
+        texto_rn = st.text_area(t("mt_transcript", lang), height=200, key="mt_texto")
+        if texto_rn.strip() and st.button(t("mt_build", lang), key="mt_b_paste", type="primary"):
+            _cargar_turnos(reuniones.parsear(texto_rn))
+            st.rerun()
+    else:
+        st.caption(t("mt_audio_hint", lang).format(mb=reuniones.LIMITE_MB) if origen == "mt_src_audio"
+                   else t("mt_mic_hint", lang))
+        audio = (st.file_uploader("audio / video", type=list(reuniones.FORMATOS_AUDIO), key="mt_audio")
+                 if origen == "mt_src_audio" else st.audio_input(t("mt_src_mic", lang), key="mt_mic"))
+        c1, c2 = st.columns([2, 3])
+        trans = c1.selectbox(t("mt_provider", lang), list(reuniones.TRANSCRIPTORES),
+                             format_func=lambda k: reuniones.TRANSCRIPTORES[k]["nombre"], key="mt_prov")
+        clave_rn = c2.text_input(t("ai_key", lang), type="password",
+                                 value=st.session_state.get("ai_key", "") if st.session_state.get("ai_prov") == trans else "",
+                                 key="mt_key")
+        if audio is not None and st.button(t("mt_transcribe", lang), key="mt_b_audio", type="primary"):
+            with st.spinner("…"):
+                try:
+                    r = reuniones.transcribir(audio.getvalue(), getattr(audio, "name", "audio.wav"),
+                                              trans, clave_rn, idioma=lang)
+                    _cargar_turnos(r["turnos"], t("mt_no_speakers", lang))
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.error(str(exc))
+
+    if not turnos:
+        st.info(t("mt_empty", lang))
+    else:
+        m = reuniones.minuta(turnos, titulo_rn, lang)
+        if not m["con_hablantes"]:
+            st.warning(t("mt_no_speakers", lang))
+        c = st.columns(4)
+        c[0].metric(t("mt_people", lang), len(m["participantes"]))
+        c[1].metric(t("mt_decisions", lang), len(m["decisiones"]))
+        c[2].metric(t("mt_commitments", lang), len(m["compromisos"]))
+        c[3].metric(t("mt_risks", lang), len(m["riesgos"]))
+        st.dataframe(pd.DataFrame(m["participantes"]), use_container_width=True, hide_index=True)
+        for clave, titulo in (("decisiones", "mt_decisions"), ("compromisos", "mt_commitments"),
+                              ("riesgos", "mt_risks"), ("preguntas", "mt_questions")):
+            items = m[clave]
+            st.markdown(f"### {t(titulo, lang)} · {len(items)}")
+            if not items:
+                st.caption(t("mt_none", lang))
+            for it in items[:30]:
+                marca = f" · {int(it['inicio']) // 60:02d}:{int(it['inicio']) % 60:02d}" if it.get("inicio") is not None else ""
+                cuando = f" <b>[{html.escape(str(it['cuando']))}]</b>" if it.get("cuando") else ""
+                st.markdown(f"<div class='mv-etapa mv-ok'><b>{html.escape(it.get('hablante') or '?')}</b>"
+                            f"<small>{marca}</small>: {html.escape(it['texto'])}{cuando}</div>", unsafe_allow_html=True)
+        if m["menciones"]:
+            st.markdown(f"### {t('mt_by_stage', lang)}")
+            for etapa_m, items in m["menciones"].items():
+                with st.expander(f"{t(f'st_{etapa_m}', lang)} · {len(items)}"):
+                    for it in items[:10]:
+                        st.markdown(f"- **{it.get('hablante') or '?'}**: {it['texto']}")
+        if st.button(t("mt_ai_add", lang), key="mt_ai"):
+            with st.spinner("…"):
+                m["resumen_ia"] = reuniones.resumen_ia(turnos, lang, **_ia_config())
+            st.session_state["mvde_resumen_ia"] = m["resumen_ia"]
+            st.rerun()
+        if st.session_state.get("mvde_resumen_ia"):
+            m["resumen_ia"] = st.session_state["mvde_resumen_ia"]
+            st.markdown(f"### {t('mt_ai_summary', lang)}")
+            st.markdown(m["resumen_ia"])
+
+        st.divider()
+        st.markdown(f"### {t('mt_to_survey', lang)}")
+        st.caption(t("mt_to_survey_hint", lang))
+        propuestas = reuniones.sugerir_respuestas(turnos, lang)
+        if not propuestas:
+            st.caption(t("mt_none", lang))
+        catalogo_rv = {q["id"]: q for q in relevamiento.catalogo(lang)}
+        for i, (qid, prop) in enumerate(list(propuestas.items())[:12]):
+            q = catalogo_rv[qid]
+            c1, c2 = st.columns([6, 1])
+            c1.markdown(f"<div class='mv-etapa mv-omitida'><b>{html.escape(q['pregunta'])}</b><br>"
+                        f"<small>{html.escape(prop.get('hablante') or '?')}: {html.escape(prop['texto'])}</small></div>",
+                        unsafe_allow_html=True)
+            if c2.button(t("mt_use", lang), key=f"mt_use_{i}"):
+                base_rv = _relevamiento()
+                _guardar_relevamiento(relevamiento.responder(
+                    base_rv, qid, prop["texto"], prop.get("hablante") or "", "",
+                    "repreguntar", t("mt_titulo", lang) + ": " + (titulo_rn or "")))
+                st.success(t("rv_saved", lang).format(ruta=relevamiento.ARCHIVO))
+
+        st.divider()
+        g1, g2 = st.columns(2)
+        if g1.button(t("mt_build", lang) + " → " + t("download", lang), key="mt_guardar", type="primary"):
+            ruta_m = reuniones.guardar(reuniones.carpeta(p), m, turnos)
+            st.success(t("mt_saved", lang).format(ruta=ruta_m.name))
+        g2.download_button(f"{t('download', lang)} MINUTA_{lang}.md",
+                           reuniones.markdown(m, lang).encode("utf-8"),
+                           file_name=f"MINUTA_{lang}.md", key="dl_minuta")
+        previas = reuniones.listar(reuniones.carpeta(p))
+        if previas:
+            with st.expander(f"{t('mt_previous', lang)} · {len(previas)}"):
+                for f_ in previas[:20]:
+                    st.markdown(f"- `{f_.name}`")
 
 # ----------------------------------------------------------------- cargas
 def _hace(horas: float | None, lang: str) -> str:
