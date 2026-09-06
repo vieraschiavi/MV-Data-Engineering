@@ -126,9 +126,22 @@ Lo que hace, en orden:
    que mejor le anduvo a ella.
 
 Sale a gold y al almacén como dos tablas: `proyeccion` (historia + futuro +
-banda + días) y `proyeccion_backtest` (**real vs. proyectado sobre el pasado**,
-que es la única parte verificable). Más `ml/proyeccion.xlsx` con el modelo por
-segmento, el desvío por paso y el backtest completo.
+banda + días + `fecha_key`) y `proyeccion_backtest` (**real vs. proyectado
+sobre el pasado**, que es la única parte verificable). Más `ml/proyeccion.xlsx`
+con el modelo por segmento, el desvío por paso y el backtest completo.
+
+Y llega hasta el tablero sin trabajo manual:
+
+- **`dim_calendario` se estira** hasta el último período proyectado. Sin eso,
+  las filas del futuro apuntan a fechas que el calendario no tiene, caen en el
+  renglón «en blanco» de la relación y la línea proyectada no se dibuja — sin
+  ningún error que lo avise.
+- **Medidas DAX generadas**: `Histórico`, `Proyectado`, `Banda baja`,
+  `Banda alta`, `Ancho de banda %`, `Línea completa`, y sobre el backtest
+  `Real (backtest)`, `Proyectado (backtest)`, `Desvío del backtest %` y
+  `Desvío absoluto medio %`.
+- **Gráfico en el reporte**: histórico, proyección y banda sombreada, primero
+  en el HTML y en el Excel.
 
 ### TimesFM (opcional)
 

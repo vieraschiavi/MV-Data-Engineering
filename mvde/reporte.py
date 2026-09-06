@@ -94,9 +94,14 @@ def _estilo(ax, titulo, sub=""):
     ax.tick_params(colors=MUTED)
     ax.yaxis.grid(True, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
+    from matplotlib.dates import AutoDateFormatter, DateFormatter
     from matplotlib.ticker import FuncFormatter
     fmt = FuncFormatter(lambda v, _p: f"{v:,.0f}".replace(",", "."))
-    ax.xaxis.set_major_formatter(fmt)
+    # Si el eje X ya es de fechas, NO se lo pisa: el formateador de miles
+    # convierte 2023-06 en «19.539» (el número interno de matplotlib) y el
+    # gráfico queda ilegible sin dar ningún error.
+    if not isinstance(ax.xaxis.get_major_formatter(), DateFormatter | AutoDateFormatter):
+        ax.xaxis.set_major_formatter(fmt)
     ax.yaxis.set_major_formatter(fmt)
 
 
@@ -152,7 +157,47 @@ def graficos(spec: dict, ruta_db: Path, gold: dict[str, pd.DataFrame], carpeta: 
             plt.close(fig)
             salidas.append(p)
             break
+    g = _grafico_proyeccion(gold, carpeta)
+    if g:
+        salidas.insert(0, g)                       # la proyección va primera: es lo que se mira
     return salidas
+
+
+def _grafico_proyeccion(gold: dict[str, pd.DataFrame], carpeta: Path) -> Path | None:
+    """Histórico, proyección y banda de desvío en un solo gráfico.
+
+    La banda se dibuja sombreada y no como dos líneas más: lo que tiene que
+    quedar claro de un vistazo es que el futuro es un rango, no un número."""
+    df = gold.get("proyeccion")
+    if df is None or df.empty or "banda_baja" not in df.columns:
+        return None
+    d = df[df["segmento"] == "TOTAL"] if "segmento" in df.columns else df
+    # `datetime64[us]` (lo que devuelve el parquet) matplotlib lo dibuja como
+    # número crudo: el eje sale con 19.539 en vez de 2023-06. Hay que pasarlo a
+    # nanosegundos, que es lo único que su conversor de fechas reconoce.
+    d = d.assign(periodo=pd.to_datetime(d["periodo"]).astype("datetime64[ns]")).sort_values("periodo")
+    hist, fut = d[d["tipo"] == "historia"], d[d["tipo"] == "proyeccion"]
+    if len(hist) < 2 or fut.empty:
+        return None
+    # El primer punto proyectado se une al último real para que la línea no
+    # aparezca cortada: es la misma serie, no dos.
+    puente = pd.concat([hist.tail(1), fut])
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(hist["periodo"], hist["valor"], color=SERIE, linewidth=2, label="Histórico")
+    ax.plot(puente["periodo"], puente["valor"], color=MALO, linewidth=2, linestyle="--", label="Proyectado")
+    baja = pd.to_numeric(fut["banda_baja"], errors="coerce")
+    alta = pd.to_numeric(fut["banda_alta"], errors="coerce")
+    if baja.notna().all() and alta.notna().all():
+        ax.fill_between(fut["periodo"], baja, alta, color=MALO, alpha=0.15, linewidth=0, label="Banda de desvío")
+    backend = fut["backend"].iloc[0] if "backend" in fut.columns else ""
+    _estilo(ax, "Proyección con banda de desvío", f"modelo «{backend}» elegido por backtest de origen móvil" if backend else "")
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    ax.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
+    p = carpeta / "00_proyeccion.png"
+    fig.savefig(p, dpi=140)
+    plt.close(fig)
+    return p
 
 
 def excel(ruta: Path, spec: dict, kpis: list[dict], calidad: dict, catalogo: pd.DataFrame,

@@ -354,3 +354,57 @@ def test_el_porque_cita_los_numeros_del_backtest():
     res = P.correr(_cartera(), {"fecha": "fecha", "valor": "monto", "horizonte": 3, "origenes": 5})
     assert res["modelo"] in res["porque"] and "cortes de backtest" in res["porque"]
     assert "referencia" in res["porque"] and "%" in res["porque"]
+
+
+# --------------------------------------------- la proyección llega al tablero
+def test_el_calendario_se_estira_hasta_donde_llega_la_proyeccion():
+    """Sin esto, las filas proyectadas apuntan a fechas que dim_calendario no
+    tiene y en Power BI caen en el renglón «en blanco» de la relación: la línea
+    del futuro no se dibuja y nadie entiende por qué."""
+    from mvde import gold
+    base = ("2023-06-01", "2026-05-31")
+    assert gold._extender_por_proyeccion(base, {"ml": {"target": "x"}}) == base, "sin serie no se toca"
+    _, hasta = gold._extender_por_proyeccion(base, {"ml": {"tipo": "serie", "frecuencia": "mensual", "horizonte": 6}})
+    assert pd.Timestamp(hasta) >= pd.Timestamp("2026-11-01")
+    _, diaria = gold._extender_por_proyeccion(base, {"ml": {"tipo": "serie", "frecuencia": "diaria", "horizonte": 14}})
+    assert pd.Timestamp("2026-06-01") <= pd.Timestamp(diaria) <= pd.Timestamp("2026-07-31")
+
+
+def test_hay_medidas_dax_para_la_proyeccion_y_su_backtest():
+    from mvde import dax
+    _txt, med = dax.generar({"kpis": [], "ml": {"tipo": "serie", "valor": "total_cobrado"}},
+                            ["proyeccion", "proyeccion_backtest", "dim_calendario"])
+    nombres = {m["nombre"] for m in med}
+    assert {"Histórico", "Proyectado", "Banda baja", "Banda alta", "Ancho de banda %"} <= nombres
+    assert {"Real (backtest)", "Proyectado (backtest)", "Desvío del backtest %"} <= nombres
+    # Histórico y proyectado se separan por `tipo`: si no, la línea se duplica.
+    proy = next(m for m in med if m["nombre"] == "Proyectado")
+    assert 'proyeccion[tipo] = "proyeccion"' in proy["expresion"]
+    # Y sin la tabla no se generan medidas colgadas.
+    _txt2, med2 = dax.generar({"kpis": []}, ["fact_x"])
+    assert not [m for m in med2 if m["tabla"].startswith("proyeccion")]
+
+
+def test_el_grafico_de_la_proyeccion_no_pierde_las_fechas(tmp_path):
+    """El formateador de miles del estilo corporativo pisaba el eje de fechas y
+    lo dejaba en «19.539». Eso no da error: sale un gráfico ilegible."""
+    from matplotlib.dates import AutoDateFormatter, DateFormatter
+
+    from mvde import reporte
+    fechas = pd.date_range("2024-01-01", periods=30, freq="MS")
+    df = pd.DataFrame({"periodo": fechas, "valor": np.linspace(100, 130, 30), "segmento": "TOTAL",
+                       "backend": "", "tipo": ["historia"] * 24 + ["proyeccion"] * 6,
+                       "banda_baja": [None] * 24 + list(np.linspace(120, 124, 6)),
+                       "banda_alta": [None] * 24 + list(np.linspace(130, 140, 6))})
+    p = reporte._grafico_proyeccion({"proyeccion": df}, tmp_path)
+    assert p and p.exists() and p.stat().st_size > 5000
+    fig, ax = __import__("matplotlib.pyplot", fromlist=["x"]).subplots()
+    ax.plot(fechas, range(30))
+    reporte._estilo(ax, "prueba")
+    assert isinstance(ax.xaxis.get_major_formatter(), DateFormatter | AutoDateFormatter)
+
+
+def test_sin_proyeccion_no_hay_grafico(tmp_path):
+    from mvde import reporte
+    assert reporte._grafico_proyeccion({}, tmp_path) is None
+    assert reporte._grafico_proyeccion({"proyeccion": pd.DataFrame()}, tmp_path) is None

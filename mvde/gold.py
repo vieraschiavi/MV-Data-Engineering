@@ -92,6 +92,30 @@ def _rango_fechas(tablas: dict[str, pd.DataFrame]) -> tuple[str, str] | None:
     return (minimo.replace(day=1).strftime("%Y-%m-%d"), (maximo + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d"))
 
 
+# Cuánto dura un período de cada frecuencia, para estirar el calendario hasta
+# donde llega la proyección.
+_PASO_FRECUENCIA = {"diaria": pd.DateOffset(days=1), "semanal": pd.DateOffset(weeks=1),
+                    "mensual": pd.DateOffset(months=1), "trimestral": pd.DateOffset(months=3),
+                    "anual": pd.DateOffset(years=1)}
+
+
+def _extender_por_proyeccion(rango: tuple[str, str], spec: dict) -> tuple[str, str]:
+    """Un modelo que proyecta necesita calendario en el futuro.
+
+    Sin esto, las filas proyectadas de `proyeccion` apuntan a fechas que
+    `dim_calendario` no tiene y en Power BI caen en el renglón «en blanco» de la
+    relación: la línea del futuro simplemente no se dibuja."""
+    ml = spec.get("ml") or {}
+    if ml.get("tipo") != "serie":
+        return rango
+    paso = _PASO_FRECUENCIA.get(ml.get("frecuencia", "mensual"))
+    horizonte = int(ml.get("horizonte", 3))
+    if paso is None or horizonte <= 0:
+        return rango
+    hasta = pd.Timestamp(rango[1]) + paso * horizonte
+    return rango[0], (hasta + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d")
+
+
 def hecho(df: pd.DataFrame, cfg: dict, dims: dict[str, pd.DataFrame], dim_cfg: dict[str, dict]) -> pd.DataFrame:
     f = df.copy()
     for col, dim_nombre in (cfg.get("claves") or {}).items():
@@ -131,6 +155,7 @@ def construir(spec: dict, silver: dict[str, pd.DataFrame], previo: dict[str, pd.
     if cal == "auto":
         rango = _rango_fechas(silver)
         if rango:
+            rango = _extender_por_proyeccion(rango, spec)
             gold["dim_calendario"] = calendario(*rango)
             notas.append(f"dim_calendario: {rango[0]} → {rango[1]}")
     elif isinstance(cal, dict):

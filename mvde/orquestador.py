@@ -310,6 +310,11 @@ class Pipeline:
         res = proyeccion.correr(df, cfg)
         self.dirs["ml"].mkdir(parents=True, exist_ok=True)
         serie, comparacion = res.pop("serie"), res.pop("comparacion")
+        # `fecha_key` para que la tabla se relacione con dim_calendario como
+        # cualquier hecho: el calendario ya viene estirado hasta el horizonte.
+        for tabla in (serie, comparacion):
+            if "periodo" in tabla.columns:
+                tabla["fecha_key"] = pd.to_datetime(tabla["periodo"]).dt.strftime("%Y%m%d").fillna("0").astype(int)
         # La proyección entra a gold como una tabla más: historia y futuro en el
         # mismo formato, con banda de desvío y segmento. Power BI dibuja la
         # línea entera sin ningún caso especial.

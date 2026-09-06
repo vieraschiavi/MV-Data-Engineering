@@ -30,6 +30,57 @@ def _formato(k: dict) -> str:
     return "0.0%" if f.endswith("%") else f
 
 
+def _medidas_proyeccion(spec: dict) -> list[dict]:
+    """Medidas de la tabla `proyeccion` (historia + futuro + banda).
+
+    La columna `tipo` separa las dos mitades de la misma línea, así que todo se
+    filtra por ahí. La banda no se promedia: se suma, porque al agrupar por mes
+    lo que se quiere es el piso y el techo del total de ese mes."""
+    unidad = (spec.get("ml") or {}).get("valor") or "valor"
+    m = [
+        {"nombre": "Histórico", "expresion": 'CALCULATE ( SUM ( proyeccion[valor] ), proyeccion[tipo] = "historia" )',
+         "descripcion": f"{unidad} realmente observado (la parte de la línea que ya pasó)"},
+        {"nombre": "Proyectado", "expresion": 'CALCULATE ( SUM ( proyeccion[valor] ), proyeccion[tipo] = "proyeccion" )',
+         "descripcion": f"{unidad} proyectado por el modelo elegido en el backtest"},
+        {"nombre": "Banda baja", "expresion": 'CALCULATE ( SUM ( proyeccion[banda_baja] ), proyeccion[tipo] = "proyeccion" )',
+         "descripcion": "Piso de la banda de desvío, medido sobre los errores del backtest"},
+        {"nombre": "Banda alta", "expresion": 'CALCULATE ( SUM ( proyeccion[banda_alta] ), proyeccion[tipo] = "proyeccion" )',
+         "descripcion": "Techo de la banda de desvío, medido sobre los errores del backtest"},
+        {"nombre": "Ancho de banda %", "formato": "0.0%",
+         "expresion": "DIVIDE ( [Banda alta] - [Banda baja], [Proyectado] )",
+         "descripcion": "Cuánta incertidumbre tiene la proyección de ese período, en % del valor proyectado"},
+        {"nombre": "Línea completa", "expresion": "[Histórico] + [Proyectado]",
+         "descripcion": "Histórico y proyección en una sola línea, para el gráfico continuo"},
+    ]
+    for x in m:
+        x.setdefault("tabla", "proyeccion")
+        x.setdefault("formato", "#,0")
+    return m
+
+
+def _medidas_backtest() -> list[dict]:
+    """Medidas de `proyeccion_backtest`: lo que el modelo dijo contra lo que
+    realmente pasó. Es la evidencia que respalda la proyección."""
+    m = [
+        {"nombre": "Real (backtest)", "expresion": "SUM ( proyeccion_backtest[real] )",
+         "descripcion": "Lo que realmente pasó en cada corte del backtest"},
+        {"nombre": "Proyectado (backtest)", "expresion": "SUM ( proyeccion_backtest[proyectado] )",
+         "descripcion": "Lo que el modelo habría dicho en ese corte, entrenando sólo con lo anterior"},
+        {"nombre": "Desvío del backtest", "expresion": "[Proyectado (backtest)] - [Real (backtest)]",
+         "descripcion": "Diferencia absoluta; positivo = el modelo proyectó de más"},
+        {"nombre": "Desvío del backtest %", "formato": "0.0%",
+         "expresion": "DIVIDE ( [Desvío del backtest], [Real (backtest)] )",
+         "descripcion": "Desvío en porcentaje del real: es el número que se muestra al lado de la proyección"},
+        {"nombre": "Desvío absoluto medio %", "formato": "0.0%",
+         "expresion": "AVERAGEX ( VALUES ( proyeccion_backtest[corte] ), ABS ( [Desvío del backtest %] ) )",
+         "descripcion": "Error típico del modelo, promediando los cortes sin que se compensen los signos"},
+    ]
+    for x in m:
+        x.setdefault("tabla", "proyeccion_backtest")
+        x.setdefault("formato", "#,0")
+    return m
+
+
 def generar(spec: dict, gold_tablas: list[str]) -> tuple[str, list[dict]]:
     kpis = spec.get("kpis") or []
     hay_calendario = "dim_calendario" in gold_tablas
@@ -80,6 +131,10 @@ def generar(spec: dict, gold_tablas: list[str]) -> tuple[str, list[dict]]:
             medidas.append({"nombre": f"{nombre} var. mensual %", "tabla": tabla, "formato": "0.0%",
                             "expresion": f"DIVIDE ( [{nombre}] - [{nombre} mes anterior], [{nombre} mes anterior] )",
                             "descripcion": f"Variación de {nombre} contra el mes anterior"})
+    if "proyeccion" in gold_tablas:
+        medidas += _medidas_proyeccion(spec)
+    if "proyeccion_backtest" in gold_tablas:
+        medidas += _medidas_backtest()
     tabla_actual = None
     for m in medidas:
         if m["tabla"] != tabla_actual:
