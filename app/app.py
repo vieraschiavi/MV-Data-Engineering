@@ -24,7 +24,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from mvde import APP_NAME, BRAND, ETAPAS, __version__, auth, automatizacion, demos, ia, justificacion, proyecto, salud, transformaciones  # noqa: E402
+from mvde import APP_NAME, BRAND, ETAPAS, __version__, auth, automatizacion, demos, frescura, ia, justificacion, proyecto, salud, transformaciones  # noqa: E402
 from mvde.i18n import DEFAULT_LANG, LANG_NAMES, LANGS, t  # noqa: E402
 from mvde.orquestador import Pipeline  # noqa: E402
 
@@ -47,6 +47,19 @@ h1, h2, h3 {{ color: {BRAND['ink']}; }}
 .mv-ok {{ border-left:4px solid {BRAND['green']}; }} .mv-fallo {{ border-left:4px solid {BRAND['red']}; }}
 .mv-omitida {{ border-left:4px solid {BRAND['muted']}; }} .mv-pendiente {{ border-left:4px solid rgba(157,176,200,.4); }}
 .mv-etapa small {{ color:{BRAND['muted']}; }}
+/* Tarjetas del monitoreo de cargas: una por tabla, semáforo abajo. */
+.mv-carga {{ border:1px solid rgba(157,176,200,.22); border-radius:10px; padding:10px 12px; margin:4px 0;
+  background:rgba(255,255,255,.035); color:{BRAND['ink']}; height:100%; }}
+.mv-carga .t {{ font-weight:700; font-size:14px; letter-spacing:.01em; }}
+.mv-carga .l {{ color:{BRAND['muted']}; font-size:11px; text-transform:uppercase; letter-spacing:.06em; }}
+.mv-carga .d {{ color:{BRAND['ink']}; font-size:12px; margin-top:6px; line-height:1.5; }}
+.mv-carga .d b {{ color:{BRAND['muted']}; font-weight:600; }}
+.mv-chip {{ display:inline-block; border-radius:4px; padding:2px 9px; font-size:10.5px; font-weight:700;
+  letter-spacing:.06em; margin-top:8px; }}
+.mv-chip.actualizada {{ background:{BRAND['green']}; color:#03201a; }}
+.mv-chip.atrasada {{ background:{BRAND['red']}; color:#2a0606; }}
+.mv-chip.sin_fecha {{ background:{BRAND['muted']}; color:#0b1626; }}
+.mv-chip.vacia {{ background:{BRAND['amber2']}; color:#2a1a02; }}
 /* Texto claro en todo lo que Streamlit pinta con su propio color: pestañas,
    etiquetas de widgets, captions, expanders. El tema oscuro de
    .streamlit/config.toml hace el grueso; esto cubre lo que el tema deja gris. */
@@ -174,9 +187,10 @@ if p is None:
     st.info(t("no_project", lang))
     st.stop()
 
-tab_pipe, tab_health, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_trans, tab_auto, tab_help = st.tabs([
-    t("tab_pipeline", lang), t("tab_health", lang), t("tab_sources", lang), t("tab_project", lang), t("tab_data", lang), t("tab_ai", lang),
-    t("tab_rationale", lang), t("tab_transforms", lang), t("tab_automation", lang), t("tab_help", lang)])
+tab_pipe, tab_health, tab_load, tab_src, tab_proj, tab_data, tab_ai, tab_just, tab_trans, tab_auto, tab_help = st.tabs([
+    t("tab_pipeline", lang), t("tab_health", lang), t("tab_loads", lang), t("tab_sources", lang), t("tab_project", lang),
+    t("tab_data", lang), t("tab_ai", lang), t("tab_rationale", lang), t("tab_transforms", lang),
+    t("tab_automation", lang), t("tab_help", lang)])
 
 
 def _guardar_spec(spec: dict) -> None:
@@ -250,6 +264,70 @@ with tab_health:
             if cands:
                 st.markdown(f"**{t('h_target', lang)}**")
                 st.dataframe(pd.DataFrame(cands), use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------------------- cargas
+def _hace(horas: float | None, lang: str) -> str:
+    if horas is None:
+        return "—"
+    if horas < 48:
+        return t("fr_ago", lang).format(horas=f"{horas:,.0f}".replace(",", "."))
+    return t("fr_ago_days", lang).format(dias=f"{horas / 24:,.0f}".replace(",", "."))
+
+
+with tab_load:
+    st.markdown(t("fr_intro", lang))
+    if not p.resultados or not p.silver:
+        st.info(t("status_pending", lang))
+    else:
+        filas = p.frescura or frescura.evaluar(p)
+        res = frescura.resumen(filas)
+        st.markdown(f"**{t('tab_loads', lang)}** · {t('fr_updated_at', lang).format(fecha=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}")
+        c = st.columns(4)
+        for i, e in enumerate(frescura.ESTADOS):
+            c[i].metric(t(f"fr_e_{e}", lang), res.get(e, 0))
+        # Tarjetas: una por tabla, en filas de a cinco como un tablero de operación.
+        POR_FILA = 5
+        for arranque in range(0, len(filas), POR_FILA):
+            cols = st.columns(POR_FILA)
+            for col, f in zip(cols, filas[arranque:arranque + POR_FILA]):
+                dato = (f["fecha_datos"] or "").replace("T", " ")[:16]
+                carga = (f["fecha_carga"] or "").replace("T", " ")[:16]
+                detalle = ""
+                if f["estado"] == "sin_fecha":
+                    detalle = f"<br><small style='color:{BRAND['muted']}'>{t('fr_no_date_hint', lang)}</small>"
+                elif f["estado"] == "atrasada" and f["fecha_datos"]:
+                    detalle = (f"<br><small style='color:{BRAND['muted']}'>"
+                               f"{t('fr_late_hint', lang).format(fecha=dato, tolerancia=int(f['tolerancia_horas']))}</small>")
+                col.markdown(
+                    f"<div class='mv-carga'><div class='t'>{html.escape(f['tabla'])}</div>"
+                    f"<div class='l'>{f['capa']} · {t('fr_every', lang)} {f['cada']}</div>"
+                    f"<div class='d'><b>{t('fr_data', lang)}:</b> {dato or '—'} <small>{_hace(f['horas_desde_datos'], lang) if f['fecha_datos'] else ''}</small><br>"
+                    f"<b>{t('fr_load', lang)}:</b> {carga or '—'} <small>{_hace(f['horas_desde_carga'], lang) if f['fecha_carga'] else ''}</small><br>"
+                    f"<b>{t('fr_rows', lang)}:</b> {f['filas']:,}".replace(",", ".")
+                    + f"</div><span class='mv-chip {f['estado']}'>{t('fr_e_' + f['estado'], lang)}</span>{detalle}</div>",
+                    unsafe_allow_html=True)
+        st.divider()
+        # Frecuencia REAL: cada cuánto cambió el dato de verdad, según el historial.
+        hist = frescura.historial(p)
+        st.markdown(f"### {t('fr_real', lang)}")
+        medidas = []
+        for f in filas:
+            real = frescura.frecuencia_real(hist, f["tabla"])
+            if real:
+                medidas.append({t("fr_table", lang): f["tabla"], t("fr_every", lang): f["cada"],
+                                f"{t('fr_median', lang)} (h)": real["mediana_horas"],
+                                "min (h)": real["minimo_horas"], "max (h)": real["maximo_horas"],
+                                "n": real["observaciones"]})
+        if medidas:
+            st.dataframe(pd.DataFrame(medidas), use_container_width=True, hide_index=True)
+        else:
+            st.caption(f"{t('fr_real_none', lang)}  ·  {t('fr_history', lang)}: {len(hist)}")
+        with st.expander(t("fr_table", lang)):
+            st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
+        st.caption(t("fr_declare", lang))
+        st.download_button(f"{t('download', lang)} frescura.json",
+                           json.dumps({"resumen": res, "tablas": filas}, ensure_ascii=False, indent=2).encode("utf-8"),
+                           file_name="frescura.json", mime="application/json", key="dl_frescura")
 
 # ----------------------------------------------------------------- fuentes
 with tab_src:

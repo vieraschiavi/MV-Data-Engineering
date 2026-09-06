@@ -115,6 +115,8 @@ def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
                       "FROM gold.fact_cliente_riesgo r JOIN gold.dim_cliente d USING (dim_cliente_key) "
                       "JOIN gold.fact_cuota f USING (dim_cliente_key) GROUP BY 1,2,3,4,5,6",
                "target": "default_proximo_mes", "tipo": "clasificacion"},
+        # El maestro de clientes se refresca todos los días; las cuotas son mensuales.
+        "frescura": {"cada": "diaria", "tablas": {"cuotas": {"cada": "mensual"}, "fact_cuota": {"cada": "mensual"}}},
         "reporte": {"titulo": "Cobranzas · tablero de mora y default", "graficos": "auto"},
         "powerbi": {"generar": True, "nombre": "Cobranzas"},
         "automatizacion": {"hora": "05:00", "reintentos": 3},
@@ -183,6 +185,7 @@ def _ventas(carpeta: Path, seed: int = 42) -> dict:
         ],
         "gobernanza": {"dueno": "BI Comercial", "descripciones": {"ventas.importe": "Unidades × precio unitario con descuento"}},
         "ml": {"tabla": "fact_venta", "target": "importe", "tipo": "regresion", "fecha": None, "excluir": ["precio_unitario"]},
+        "frescura": {"cada": "diaria", "tablas": {"productos": {"cada": "semanal"}, "sucursales": {"cada": "mensual"}}},
         "reporte": {"titulo": "Ventas · tablero comercial", "graficos": "auto"},
         "powerbi": {"generar": True, "nombre": "Ventas"},
     }
@@ -338,6 +341,8 @@ def _kash(carpeta: Path, n: int = 6000, seed: int = 42) -> dict:
         "ml": {"tabla": "fact_cliente_train", "tabla_score": "fact_cliente_score", "target": "pago_val", "tipo": "clasificacion",
                "excluir": ["NMesesConPago_VAL", "NMesesConPago_TRAIN", "monto_ref"], "id": "dim_cliente_key",
                "cobranzas": {"monto": "monto_ref", "dias_mora": "DiasAtraso_Actual"}},
+        # El backtest se arma una vez por mes con la foto de cierre.
+        "frescura": {"cada": "mensual"},
         "reporte": {"titulo": "Kash · ProbPago, backtest a ciegas y cartera priorizada", "graficos": "auto"},
         "powerbi": {"generar": True, "nombre": "Kash"},
         "automatizacion": {"hora": "05:00", "reintentos": 3},

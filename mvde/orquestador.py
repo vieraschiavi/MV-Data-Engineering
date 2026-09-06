@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import ETAPAS, __version__
-from . import almacen, bronze, calidad, dax, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, salud, silver, transformaciones
+from . import almacen, bronze, calidad, dax, frescura, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, salud, silver, transformaciones
 
 log = logging.getLogger("mvde")
 OPCIONALES = {"ml", "powerbi"}
@@ -65,6 +65,7 @@ class Pipeline:
         self.medidas: list[dict] = []
         self.salud: dict = {}
         self.transformaciones: dict = {}
+        self.frescura: list = []
         self.resultados: dict[str, Resultado] = {}
         self._cargar_estado()
 
@@ -359,6 +360,11 @@ class Pipeline:
         lineas += ["", "## Artefactos", ""] + [f"- `{a}`" for e, r in self.resultados.items() for a in r.artefactos]
         p2 = self.dirs["entrega"] / "RESUMEN.md"
         p2.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+        # Monitoreo de cargas: hasta cuándo llega el dato y cuándo se cargó cada tabla.
+        self.frescura = frescura.evaluar(self)
+        reporte.guardar_json(self.dirs["entrega"] / "frescura.json",
+                             {"resumen": frescura.resumen(self.frescura), "tablas": self.frescura})
+        frescura.registrar(self, self.frescura)
         # Salud de la corrida (por área) e historial para el antes/después.
         self.salud = salud.evaluar(self)
         reporte.guardar_json(self.dirs["entrega"] / "salud.json", self.salud)

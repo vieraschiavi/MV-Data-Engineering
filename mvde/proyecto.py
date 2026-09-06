@@ -28,6 +28,8 @@ PLANTILLA = {
     "vistas": {},
     "kpis": [],
     "gobernanza": {"dueno": "", "pii": [], "descripciones": {}},
+    # Cada cuánto se espera dato nuevo. Por tabla se afina en `frescura.tablas`.
+    "frescura": {"cada": "diaria", "tablas": {}},
     "ml": None,
     "reporte": {"titulo": "", "graficos": "auto"},
     "powerbi": {"generar": True, "nombre": ""},
