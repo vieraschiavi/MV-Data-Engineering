@@ -299,6 +299,12 @@ def sugerencias(pipeline) -> list[dict]:
                         "titulo": f"El backtest corrió con {bt.get('origenes')} orígenes",
                         "detalle": "Con pocos cortes, la diferencia entre modelos puede ser suerte. "
                                    "Sumar historia antes de decidir con este número."})
+        if pipeline.ml.get("licencia_no_comercial"):
+            out.append({"area": "ml", "codigo": "serie_licencia", "severidad": "alta", "aplicable": False,
+                        "titulo": "La proyección corrió con pesos de licencia NO COMERCIAL",
+                        "detalle": "Sirve para investigar; no se entrega a un cliente ni se despliega. "
+                                   "Antes de entregar, volver a correr con un checkpoint Apache-2.0 "
+                                   "(`ml.timesfm.checkpoint: google/timesfm-2.5-200m-pytorch`) y comparar los números."})
         for n in pipeline.ml.get("notas", []):
             if "TimesFM no entró" in n:
                 out.append({"area": "ml", "codigo": "serie_timesfm", "severidad": "baja", "aplicable": False,

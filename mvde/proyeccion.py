@@ -514,6 +514,14 @@ DIAS_POR_PERIODO = {"diaria": 1, "semanal": 7, "mensual": 30, "trimestral": 90, 
 MINIMO_PERIODOS = 24
 
 
+AVISO_NO_COMERCIAL = (
+    "ATENCIÓN · esta corrida usó pesos «{checkpoint}» bajo "
+    "timesfm-non-commercial-license-v1.0: investigación sí, uso comercial y en "
+    "producción NO. Esta salida no se entrega a un cliente ni se despliega. "
+    "Para eso hay que volver a correr con un checkpoint Apache-2.0 "
+    "(por ejemplo «{comercial}»).")
+
+
 def _backends_de(cfg: dict) -> tuple[dict, list[str]]:
     """Los métodos que van a competir, más TimesFM si el YAML lo pide y se puede."""
     backends, notas = dict(BACKENDS_BASE), []
@@ -525,6 +533,13 @@ def _backends_de(cfg: dict) -> tuple[dict, list[str]]:
         backends["timesfm"] = backend_timesfm(checkpoint, int(tf.get("contexto_maximo", 512)),
                                               bool(tf.get("permitir_no_comercial", False)))
         notas.append(f"TimesFM en el backtest con {checkpoint}")
+        if checkpoint in PESOS_NO_COMERCIALES:
+            # Prender el permiso es una decisión legítima para investigar, pero
+            # tiene que dejar rastro: seis meses después nadie se acuerda de qué
+            # checkpoint corrió, y la salida se ve idéntica a una comercial.
+            aviso = AVISO_NO_COMERCIAL.format(checkpoint=checkpoint, comercial=CHECKPOINT_DEFECTO)
+            notas.append(aviso)
+            log.warning("MVDE: %s", aviso)
     except RuntimeError as exc:
         # No poder correr TimesFM no puede dejar sin proyección al proyecto.
         notas.append(f"TimesFM no entró al backtest: {exc}")
@@ -619,11 +634,14 @@ def correr(df: pd.DataFrame, cfg: dict) -> dict:
     if omitidos:
         notas.append(f"{len(omitidos)} segmento(s) sin proyección por historia insuficiente: " + "; ".join(omitidos[:3]))
 
+    tf = cfg.get("timesfm") if isinstance(cfg.get("timesfm"), dict) else {}
+    no_comercial = bool(tf) and tf.get("checkpoint") in PESOS_NO_COMERCIALES and "timesfm" in backends
     e = total["eleccion"]
     if not e["le_gana_a_la_referencia"]:
         notas.append(f"en el total ningún modelo le gana a «{e['referencia']}»: se proyecta con la referencia")
     todos = [total, *segmentos]
     return {"tipo": "serie", "modelo": total["modelo"], "metricas": total["metricas"], "importancia": {},
+            "licencia_no_comercial": no_comercial,
             "frecuencia": frecuencia, "horizonte": int(cfg.get("horizonte", 3)), "estacionalidad": m,
             "periodos": total["periodos"], "backtest": total["backtest"], "eleccion": e,
             "bandas": total["bandas"], "porque": total["porque"], "notas": notas,

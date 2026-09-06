@@ -298,10 +298,14 @@ def _ml_serie(p, lang, cfg, m) -> list[dict]:
                          paso=ult["paso"], n=ult["n"], nivel=int(100 * float(cfg.get("banda", 0.8))),
                          bajo=round(100 * ult["bajo"], 1), alto=round(100 * ult["alto"], 1),
                          sesgo=round(100 * (ult.get("sesgo") or 0), 1)))
-    nota_tf = next((n for n in m.get("notas", []) if "TimesFM" in n), "")
+    notas_tf = [n for n in m.get("notas", []) if "TimesFM" in n or "NO COMERCIAL" in n.upper()]
+    # El aviso de licencia gana sobre la nota informativa: es lo que no puede
+    # perderse entre veinte pasos de la bitácora.
+    nota_tf = next((n for n in notas_tf if "ATENCIÓN" in n), notas_tf[0] if notas_tf else "")
     if nota_tf:
+        malo = "no entró" in nota_tf or "ATENCIÓN" in nota_tf
         out.append(_paso("ml", "serie_timesfm", "TimesFM", lang, nota_tf,
-                         estado="ok" if "no entró" not in nota_tf else "aviso", estado_txt=nota_tf))
+                         estado="aviso" if malo else "ok", estado_txt=nota_tf))
     return out
 
 

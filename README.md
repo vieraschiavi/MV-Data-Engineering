@@ -130,10 +130,42 @@ banda + días) y `proyeccion_backtest` (**real vs. proyectado sobre el pasado**,
 que es la única parte verificable). Más `ml/proyeccion.xlsx` con el modelo por
 segmento, el desvío por paso y el backtest completo.
 
-> **TimesFM** (Google Research) entra como un backend más si se lo pide y está
-> instalado; si no, la etapa no se cae. Los pesos **hasta la 2.5 son Apache-2.0**;
-> los de la **3.0 son de licencia no comercial** y el motor se niega a cargarlos
-> salvo declaración explícita de uso de investigación.
+### TimesFM (opcional)
+
+Entra como un backend más si se lo pide y está instalado; si no, la etapa no se
+cae — lo deja escrito en `notas` y sigue con los demás.
+
+```yaml
+ml:
+  tipo: serie
+  # ...
+  timesfm:
+    checkpoint: google/timesfm-2.5-200m-pytorch   # Apache-2.0 · sirve para vender y desplegar
+    contexto_maximo: 512
+```
+
+Requiere `pip install timesfm[torch]` y bajar el checkpoint. **No está en
+`requirements.txt` a propósito**: son gigabytes que la mayoría de los proyectos
+no necesita.
+
+**Licencia.** El código es Apache-2.0 y los pesos **hasta la 2.5 también**. Los
+de la **3.0** salen bajo `timesfm-non-commercial-license-v1.0`: investigación
+sí, uso comercial y en producción **no**. Para investigar con ellos hay que
+declararlo:
+
+```yaml
+  timesfm:
+    checkpoint: google/timesfm-3.0-pytorch
+    permitir_no_comercial: true      # investigación · NO entregable a un cliente
+```
+
+Esa corrida queda **marcada de punta a punta**: el resumen de la etapa dice
+`⚠ PESOS NO COMERCIALES (investigación, no entregable)`, la app muestra un
+aviso rojo, la bitácora de transformaciones lo registra como paso con aviso y
+`salud.py` lo levanta como hallazgo de **severidad alta**. Es para que la
+decisión no se filtre sin querer a una carpeta de entrega seis meses después,
+cuando ya nadie se acuerda de qué checkpoint corrió.
+
 
 ## En un servidor (sin instalar nada en las PC)
 

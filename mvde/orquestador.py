@@ -336,8 +336,11 @@ class Pipeline:
         veredicto = (f"le gana a {e['referencia']} por {e['mejora_pct']}%" if e["le_gana_a_la_referencia"]
                      else f"nadie le gana a {e['referencia']}")
         segs = f" · {len(res['segmentos']) - 1} segmentos" if len(res["segmentos"]) > 1 else ""
+        # Si la corrida usó pesos no comerciales, se dice en la primera línea:
+        # es lo único que mira alguien antes de mandar la carpeta de entrega.
+        lic = " · ⚠ PESOS NO COMERCIALES (investigación, no entregable)" if res.get("licencia_no_comercial") else ""
         return Resultado("ml", True, f"serie · {res['modelo']} · {res['horizonte']} períodos proyectados{segs} · "
-                                     f"backtest {res['backtest']['origenes']} orígenes · {veredicto}", res, arts)
+                                     f"backtest {res['backtest']['origenes']} orígenes · {veredicto}{lic}", res, arts)
 
     def _reporte(self) -> Resultado:
         if not self.ruta_db.exists():

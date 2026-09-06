@@ -115,6 +115,51 @@ def test_los_pesos_3_0_no_se_cargan_sin_declarar_uso_no_comercial():
     assert P.CHECKPOINT_DEFECTO in P.PESOS_COMERCIALES
 
 
+def test_declarando_investigacion_los_pesos_3_0_pasan_la_puerta_de_licencia():
+    """El permiso existe: investigar con los 3.0 es un uso permitido. Lo que la
+    puerta impide es que entren sin que nadie lo haya decidido."""
+    ok, _ = P.timesfm_disponible()
+    with pytest.raises(RuntimeError) as e:
+        P.backend_timesfm("google/timesfm-3.0-pytorch", permitir_no_comercial=True)
+    # Ya no se queja de la licencia: ahora se queja (acá) de que falta el paquete.
+    assert "non-commercial" not in str(e.value) and "no comercial" not in str(e.value)
+    assert ok or "no está instalado" in str(e.value)
+
+
+def test_una_corrida_de_investigacion_queda_marcada_en_la_salida():
+    """Prender el permiso es legítimo y tiene que dejar rastro: seis meses
+    después la salida se ve idéntica a una comercial."""
+    df = pd.DataFrame({"fecha_key": [int(d.strftime("%Y%m%d")) for d in pd.date_range("2021-01-01", periods=48, freq="MS")],
+                       "monto": _estacional(48, ruido=2.0)})
+    cfg = {"fecha": "fecha_key", "valor": "monto", "horizonte": 3, "origenes": 4,
+           "timesfm": {"checkpoint": "google/timesfm-3.0-pytorch", "permitir_no_comercial": True}}
+    # Sustituto de los pesos: acá no hay torch ni acceso a Hugging Face, pero el
+    # camino de marcado es el mismo con pesos de verdad.
+    real = P.backend_timesfm
+    P.backend_timesfm = lambda *a, **k: P._naive_estacional
+    try:
+        res = P.correr(df, cfg)
+    finally:
+        P.backend_timesfm = real
+    assert res["licencia_no_comercial"] is True
+    aviso = [n for n in res["notas"] if "ATENCIÓN" in n]
+    assert aviso and "non-commercial" in aviso[0] and P.CHECKPOINT_DEFECTO in aviso[0]
+
+
+def test_una_corrida_comercial_no_lleva_la_marca():
+    df = pd.DataFrame({"fecha_key": [int(d.strftime("%Y%m%d")) for d in pd.date_range("2021-01-01", periods=48, freq="MS")],
+                       "monto": _estacional(48, ruido=2.0)})
+    real = P.backend_timesfm
+    P.backend_timesfm = lambda *a, **k: P._naive_estacional
+    try:
+        res = P.correr(df, {"fecha": "fecha_key", "valor": "monto", "horizonte": 3, "origenes": 4,
+                            "timesfm": {"checkpoint": P.CHECKPOINT_DEFECTO}})
+    finally:
+        P.backend_timesfm = real
+    assert res["licencia_no_comercial"] is False
+    assert not [n for n in res["notas"] if "ATENCIÓN" in n]
+
+
 def test_sin_el_paquete_instalado_el_motivo_se_explica():
     ok, motivo = P.timesfm_disponible()
     assert ok or ("timesfm" in motivo or "torch" in motivo)

@@ -230,6 +230,8 @@ def _serie_proyectada(p: Pipeline, ev: dict, lang: str) -> None:
     """La proyección con la evidencia que la respalda, en este orden: qué se
     eligió y por qué, cómo le fue contra un pasado que ya se conoce, y recién
     después el futuro con su banda de desvío."""
+    if ev.get("licencia_no_comercial"):
+        st.error(t("pr_no_comercial", lang))
     segmentos = ev.get("segmentos") or []
     serie = _tabla_ml(p, "proyeccion")
     comp = _tabla_ml(p, "proyeccion_backtest")
