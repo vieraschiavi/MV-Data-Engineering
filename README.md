@@ -48,10 +48,11 @@ MV_DataEngineering.bat                     # Windows, doble clic
 python -m mvde demo cobranzas ./demo --correr     # demo financiera, 12 etapas en ~10 s
 python -m mvde demo ventas ./demo2 --correr       # demo consumo masivo (Excel + CSV ; + Parquet)
 python -m mvde demo kash ./demo3 --correr         # backtest a ciegas: train + score, ProbPago y cartera priorizada
+python -m mvde demo cartera ./demo4 --correr      # cobranza mensual por estado: proyección a 30/60/90/120/150/180 días
 python -m mvde nuevo mis_datos.csv         # YAML de arranque desde cualquier archivo
 python -m mvde correr proyecto.yaml --desde gold   # reanudar desde una etapa
 python -m mvde automatizar proyecto.yaml   # .bat (Programador de tareas), cron, DAG de Airflow
-python -m pytest -q tests                  # 26 tests
+python -m pytest -q tests                  # 107 tests
 ```
 
 ## El YAML, en una pantalla
@@ -83,6 +84,57 @@ powerbi: {generar: true, nombre: Cobranzas}
 Las dos demos (`mvde/demos.py`) son el YAML completo de referencia: datos 100 %
 sintéticos con defectos inyectados a propósito para que el gate tenga algo que decir.
 
+## Proyección de series (`ml.tipo: serie`)
+
+La etapa ML tiene dos caminos. El tabular (clasificación/regresión, corte 60/20/20)
+y el de **series de tiempo**, para cuando la pregunta es *«¿cuánto vamos a cobrar
+en los próximos seis meses?»*.
+
+```yaml
+ml:
+  tipo: serie
+  tabla: fact_cartera          # o `sql:` sobre el almacén
+  fecha: fecha_key             # entiende el entero AAAAMMDD de gold
+  valor: total_cobrado
+  frecuencia: mensual          # diaria | semanal | mensual | trimestral | anual
+  horizonte: 6                 # 6 meses = 30/60/90/120/150/180 días
+  origenes: 7                  # cortes del backtest
+  banda: 0.8                   # nivel de la banda de desvío
+  segmento: [estado, tipo_cliente]   # un modelo por segmento, más el TOTAL
+  # timesfm: {checkpoint: google/timesfm-2.5-200m-pytorch}   # opcional
+```
+
+Lo que hace, en orden:
+
+1. **Backtest de origen móvil.** Corta la serie en varios puntos del pasado; en
+   cada corte entrena SÓLO con lo anterior y predice el tramo siguiente, que
+   compara con lo que realmente pasó. Nunca entra un dato posterior al corte.
+2. **Elige el modelo con ese número, no con una opinión.** Compiten catorce
+   backends: cinco básicos (ingenuo, estacional ingenuo, media móvil, drift,
+   tendencia estacional), Holt-Winters, ocho métodos portados de un motor de
+   proyecciones de cobranzas (YoY, MoM, Theta, reversión a la media, tendencia
+   amortiguada, ciclo con decaimiento, pendiente del ciclo, factor anual) y un
+   **ensemble** ponderado por lo que cada uno acertó.
+3. **Se mide contra el tonto.** La referencia es repetir el mismo período del
+   ciclo anterior. Si ningún modelo le gana, se proyecta con la referencia y el
+   informe lo dice con todas las letras.
+4. **Banda de desvío empírica.** El piso y el techo salen de los errores que
+   ESE modelo tuvo, paso por paso del horizonte — no de una campana supuesta —
+   y van corridos por el sesgo medido.
+5. **Un modelo por segmento.** La mora temprana y la cartera jurídica no se
+   comportan igual: cada una se proyecta por separado y se queda con el modelo
+   que mejor le anduvo a ella.
+
+Sale a gold y al almacén como dos tablas: `proyeccion` (historia + futuro +
+banda + días) y `proyeccion_backtest` (**real vs. proyectado sobre el pasado**,
+que es la única parte verificable). Más `ml/proyeccion.xlsx` con el modelo por
+segmento, el desvío por paso y el backtest completo.
+
+> **TimesFM** (Google Research) entra como un backend más si se lo pide y está
+> instalado; si no, la etapa no se cae. Los pesos **hasta la 2.5 son Apache-2.0**;
+> los de la **3.0 son de licencia no comercial** y el motor se niega a cargarlos
+> salvo declaración explícita de uso de investigación.
+
 ## En un servidor (sin instalar nada en las PC)
 
 Cuando la política de la empresa prohíbe instalar programas, o el equipo es de
@@ -107,10 +159,12 @@ en [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
 ```
 mv-data-engineering/
 ├── mvde/            motor: proyecto · fuentes · bronze · silver · calidad · gold · almacen · gobernanza ·
-│                    ml · reporte · dax · powerbi · ia · justificacion · salud · frescura · relevamiento · reuniones ·
-│                    transformaciones · auth · orquestador · automatizacion · demos · cli · i18n
+│                    ml · proyeccion · metodos_serie · reporte · dax · powerbi · ia · justificacion · salud ·
+│                    frescura · relevamiento · reuniones · transformaciones · auth · orquestador ·
+│                    automatizacion · demos · cli · i18n
 ├── app/app.py       programa Streamlit (ES/EN/PT), misma familia visual que MV Data Governance
-├── tests/           76 tests: motor, i18n, tres demos end-to-end, gate, reanudación, CLI, IA local, justificación, salud, cargas, relevamiento, reuniones, transformaciones, login
+├── tests/           107 tests: motor, i18n, cuatro demos end-to-end, gate, reanudación, CLI, IA local, justificación,
+│                    salud, cargas, relevamiento, reuniones, transformaciones, login, proyección de series
 ├── docs/DESPLIEGUE.md  puesta en marcha en servidor (para infraestructura del cliente)
 ├── Dockerfile · docker-compose.yml   despliegue en VM: la gente entra por navegador
 ├── run.sh · MV_DataEngineering.bat · requirements.txt · CLAUDE.md

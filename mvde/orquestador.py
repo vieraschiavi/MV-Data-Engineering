@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import ETAPAS, __version__
-from . import almacen, bronze, calidad, dax, frescura, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyecto, reporte, salud, silver, transformaciones
+from . import almacen, bronze, calidad, dax, frescura, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyeccion, proyecto, reporte, salud, silver, transformaciones
 
 log = logging.getLogger("mvde")
 OPCIONALES = {"ml", "powerbi"}
@@ -245,21 +245,28 @@ class Pipeline:
         return Resultado("gobernanza", True, f"{punt['tablas']} tablas catalogadas · {len(lin)} aristas de linaje · {punt['columnas_pii']} columnas PII",
                          {"puntajes": punt, "linaje": lin[:40]}, [str(p1), str(p2), str(p3)])
 
+    def _tabla_ml(self, cfg: dict, nombre_sql: str, nombre_tabla: str):
+        if cfg.get(nombre_sql):
+            return almacen.consultar(self.ruta_db, cfg[nombre_sql])           # set armado en SQL sobre el almacén
+        t = cfg.get(nombre_tabla)
+        if not t:
+            return None
+        df = self.gold.get(t) if t in self.gold else self.silver.get(t)
+        if df is None:
+            raise RuntimeError(f"tabla «{t}» no existe ni en gold ni en silver")
+        return df
+
     def _ml(self) -> Resultado:
         cfg = self.spec.get("ml")
-        if not cfg or not cfg.get("target"):
+        if not cfg:
+            return Resultado("ml", True, "sin configuración `ml` en el YAML", omitida=True)
+        if cfg.get("tipo") == "serie":
+            return self._ml_serie(cfg)
+        if not cfg.get("target"):
             return Resultado("ml", True, "sin configuración `ml` en el YAML", omitida=True)
 
         def _tabla(nombre_sql: str, nombre_tabla: str):
-            if cfg.get(nombre_sql):
-                return almacen.consultar(self.ruta_db, cfg[nombre_sql])       # set armado en SQL sobre el almacén
-            t = cfg.get(nombre_tabla)
-            if not t:
-                return None
-            df = self.gold.get(t) if t in self.gold else self.silver.get(t)
-            if df is None:
-                raise RuntimeError(f"tabla «{t}» no existe ni en gold ni en silver")
-            return df
+            return self._tabla_ml(cfg, nombre_sql, nombre_tabla)
 
         df = _tabla("sql", "tabla")
         if df is None:
@@ -288,6 +295,49 @@ class Pipeline:
             arts.append(str(px))
         met = " · ".join(f"{k} {v}" for k, v in res["metricas"].items() if v is not None)
         return Resultado("ml", True, f"{res['tipo']} · {res['modelo']} · holdout {met} · {res['filas_scoreadas']} filas scoreadas", res, arts)
+
+    def _ml_serie(self, cfg: dict) -> Resultado:
+        """`ml.tipo: serie` — proyección con backtest de origen móvil.
+
+        La tabla proyectada entra a gold y al almacén como una tabla más
+        (`proyeccion`), con historia y futuro en el mismo formato: así el
+        reporte y Power BI dibujan la línea completa sin ningún caso especial."""
+        if not cfg.get("fecha") or not cfg.get("valor"):
+            raise RuntimeError("`ml.tipo: serie` necesita `fecha` y `valor` (la columna de fecha y la medida a proyectar)")
+        df = self._tabla_ml(cfg, "sql", "tabla")
+        if df is None:
+            raise RuntimeError("`ml` necesita `tabla` o `sql`")
+        res = proyeccion.correr(df, cfg)
+        self.dirs["ml"].mkdir(parents=True, exist_ok=True)
+        serie, comparacion = res.pop("serie"), res.pop("comparacion")
+        # La proyección entra a gold como una tabla más: historia y futuro en el
+        # mismo formato, con banda de desvío y segmento. Power BI dibuja la
+        # línea entera sin ningún caso especial.
+        self.gold["proyeccion"] = serie
+        self.gold["proyeccion_backtest"] = comparacion
+        for nombre, tabla in (("proyeccion", serie), ("proyeccion_backtest", comparacion)):
+            tabla.to_parquet(self.dirs["gold"] / f"{nombre}.parquet", index=False)
+            tabla.to_parquet(self.dirs["ml"] / f"{nombre}.parquet", index=False)
+        almacen.cargar({"proyeccion": serie, "proyeccion_backtest": comparacion}, self.ruta_db)
+        self.ml = res
+        arts = [str(reporte.guardar_json(self.dirs["ml"] / "ml.json", res)),
+                str(self.dirs["ml"] / "proyeccion.parquet"), str(self.dirs["ml"] / "proyeccion_backtest.parquet")]
+        px = self.dirs["ml"] / "proyeccion.xlsx"
+        with pd.ExcelWriter(px, engine="xlsxwriter") as w:
+            pd.DataFrame([{k: v for k, v in x.items() if k != "bandas"} for x in res["segmentos"]]
+                         ).to_excel(w, sheet_name="Modelo_por_segmento", index=False)
+            serie.to_excel(w, sheet_name="Serie_y_proyeccion", index=False)
+            comparacion.to_excel(w, sheet_name="Real_vs_proyectado", index=False)
+            pd.DataFrame([dict(segmento=x["segmento"], **b) for x in res["segmentos"] for b in x["bandas"]]
+                         ).to_excel(w, sheet_name="Desvio_por_paso", index=False)
+            pd.DataFrame(res["backtest"]["resultados"]).to_excel(w, sheet_name="Backtest_total", index=False)
+        arts.append(str(px))
+        e = res["eleccion"]
+        veredicto = (f"le gana a {e['referencia']} por {e['mejora_pct']}%" if e["le_gana_a_la_referencia"]
+                     else f"nadie le gana a {e['referencia']}")
+        segs = f" · {len(res['segmentos']) - 1} segmentos" if len(res["segmentos"]) > 1 else ""
+        return Resultado("ml", True, f"serie · {res['modelo']} · {res['horizonte']} períodos proyectados{segs} · "
+                                     f"backtest {res['backtest']['origenes']} orígenes · {veredicto}", res, arts)
 
     def _reporte(self) -> Resultado:
         if not self.ruta_db.exists():

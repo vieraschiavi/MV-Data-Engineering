@@ -116,7 +116,22 @@ def evaluar(pipeline) -> dict:
     elif "dax" in r and r["dax"].ok:
         areas["bi"] = {"puntaje": 60 if r["dax"].evidencia.get("medidas") else 30, "detalle": f"{len(r['dax'].evidencia.get('medidas', []))} medidas DAX, sin .pbit"}
     # ml
-    if pipeline.ml:
+    if pipeline.ml and pipeline.ml.get("tipo") == "serie":
+        # En una proyección no hay AUC ni R²: lo que importa es cuánto se
+        # equivoca (sMAPE) y si le gana a repetir el ciclo anterior. Un modelo
+        # que no le gana al tonto no suma, aunque sea grande.
+        m = pipeline.ml.get("metricas") or {}
+        e = pipeline.ml.get("eleccion") or {}
+        smape = float(m.get("smape") or 100)
+        p = max(0.0, 100 - smape * (100 / 30))              # sMAPE 0 % → 100; 30 % o más → 0
+        if e.get("le_gana_a_la_referencia"):
+            p += min(20.0, max(0.0, float(e.get("mejora_pct") or 0)) / 2)
+        veredicto = (f"+{e.get('mejora_pct')} % vs {e.get('referencia')}" if e.get("le_gana_a_la_referencia")
+                     else f"no le gana a {e.get('referencia')}")
+        areas["ml"] = {"puntaje": round(max(0, min(100, p)), 1),
+                       "detalle": f"{pipeline.ml.get('modelo')} · sMAPE {round(smape, 2)} % · {veredicto} · "
+                                  f"{m.get('origenes_backtest')} orígenes de backtest"}
+    elif pipeline.ml:
         m = pipeline.ml.get("metricas") or {}
         base = m.get("auc") if m.get("auc") is not None else m.get("r2")
         brecha = abs(float(pipeline.ml.get("brecha_seleccion_holdout") or 0))
@@ -270,6 +285,24 @@ def sugerencias(pipeline) -> list[dict]:
                         "titulo": f"Sin modelo: {t}.{c['columna']} parece un objetivo de {c['tipo']}",
                         "detalle": "; ".join(f"{tt}.{cc['columna']} ({cc['tipo']})" for tt, cc in candidatos[:5]),
                         "parche": {"ml": {"tabla": t, "target": c["columna"], "tipo": c["tipo"]}}})
+    elif pipeline.ml and pipeline.ml.get("tipo") == "serie":
+        e = pipeline.ml.get("eleccion") or {}
+        bt = pipeline.ml.get("backtest") or {}
+        if not e.get("le_gana_a_la_referencia"):
+            out.append({"area": "ml", "codigo": "serie_sin_ganador", "severidad": "media", "aplicable": False,
+                        "titulo": f"Ningún modelo le gana a «{e.get('referencia')}»",
+                        "detalle": "Se proyecta con la referencia, que es lo honesto. Para mejorarla: más historia, "
+                                   "declarar la estacionalidad correcta en `ml.estacionalidad`, o separar la serie "
+                                   "por segmento en vez de proyectar el total."})
+        if bt.get("origenes", 0) < 6:
+            out.append({"area": "ml", "codigo": "serie_pocos_origenes", "severidad": "media", "aplicable": False,
+                        "titulo": f"El backtest corrió con {bt.get('origenes')} orígenes",
+                        "detalle": "Con pocos cortes, la diferencia entre modelos puede ser suerte. "
+                                   "Sumar historia antes de decidir con este número."})
+        for n in pipeline.ml.get("notas", []):
+            if "TimesFM no entró" in n:
+                out.append({"area": "ml", "codigo": "serie_timesfm", "severidad": "baja", "aplicable": False,
+                            "titulo": "TimesFM quedó fuera del backtest", "detalle": n})
     elif pipeline.ml:
         for n in pipeline.ml.get("notas", []):
             if n.startswith("fuga:"):

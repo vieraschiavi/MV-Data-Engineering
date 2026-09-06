@@ -246,11 +246,72 @@ def _gobernanza(p, lang) -> list[dict]:
     return out
 
 
+def _ml_serie(p, lang, cfg, m) -> list[dict]:
+    """La bitácora de una proyección: cómo se armó la serie, cómo se midió y
+    por qué se eligió ese modelo (y no otro)."""
+    s_df = p.gold.get("proyeccion")
+    hist = s_df[s_df["tipo"] == "historia"] if s_df is not None else None
+    fut = s_df[s_df["tipo"] == "proyeccion"] if s_df is not None else None
+    f = lambda d: str(pd.to_datetime(d).date()) if d is not None else "—"  # noqa: E731
+    bt, e = m.get("backtest") or {}, m.get("eleccion") or {}
+    met = m.get("metricas") or {}
+    out = [_paso("ml", "serie_arma", cfg.get("valor", "—"), lang,
+                 f"{m.get('periodos')} × {m.get('frecuencia')}",
+                 frecuencia=m.get("frecuencia", "—"), periodos=_num(m.get("periodos"), lang),
+                 origen=t("x_ml_origen_sql", lang) if cfg.get("sql") else t("x_ml_origen_tabla", lang).format(tabla=cfg.get("tabla", "—")),
+                 valor=cfg.get("valor", "—"), m=m.get("estacionalidad"),
+                 desde=f(hist["periodo"].iloc[0]) if hist is not None and len(hist) else "—",
+                 hasta=f(hist["periodo"].iloc[-1]) if hist is not None and len(hist) else "—")]
+    tabla = "; ".join(f"{x['backend']} MAE {round(x['mae'], 2)}" for x in bt.get("resultados", []) if x.get("mae") is not None) or "—"
+    out.append(_paso("ml", "serie_backtest", f"{bt.get('origenes')} × {bt.get('horizonte')}", lang, tabla,
+                     origenes=bt.get("origenes"), posibles=bt.get("origenes_posibles"),
+                     horizonte=bt.get("horizonte"), tabla=tabla))
+    gana = bool(e.get("le_gana_a_la_referencia"))
+    mejora = e.get("mejora_pct")
+    smape = _num(round(float(met.get("smape") or 0), 2), lang)
+    out.append(_paso("ml", "serie_elegido", m.get("modelo", "—"), lang,
+                     " · ".join(f"{k} {v}" for k, v in met.items() if v is not None) or "—",
+                     estado="ok" if gana else "aviso",
+                     modelo=m.get("modelo", "—"), metrica=e.get("metrica", "mae"),
+                     metricas=" · ".join(f"{k} {v}" for k, v in met.items() if v is not None) or "—",
+                     referencia=e.get("referencia", "—"), smape=smape,
+                     veredicto=t("x_serie_gana" if gana else "x_serie_no_gana", lang).format(mejora=mejora),
+                     veredicto_cri=t("x_serie_gana_cri" if gana else "x_serie_no_gana_cri", lang).format(mejora=mejora)))
+    out.append(_paso("ml", "serie_proyecta", "proyeccion", lang,
+                     f"{m.get('horizonte')} × {m.get('frecuencia')}", horizonte=m.get("horizonte"),
+                     desde=f(fut["periodo"].iloc[0]) if fut is not None and len(fut) else "—",
+                     hasta=f(fut["periodo"].iloc[-1]) if fut is not None and len(fut) else "—"))
+    segs = [x for x in (m.get("segmentos") or []) if x["segmento"] != "TOTAL"]
+    if segs:
+        modelos = {}
+        for x in segs:
+            modelos.setdefault(x["modelo"], []).append(x["segmento"])
+        detalle = "; ".join(f"{k} ({len(v)})" for k, v in sorted(modelos.items(), key=lambda i: -len(i[1])))
+        ganan = sum(1 for x in segs if x["gana"])
+        out.append(_paso("ml", "serie_segmentos", f"{len(segs)}", lang, detalle,
+                         estado="ok" if ganan else "aviso",
+                         n=len(segs), n_modelos=len(modelos), detalle=detalle, ganan=ganan))
+    ult = next((b for b in reversed(m.get("bandas") or []) if b.get("alto") is not None), None)
+    if ult:
+        out.append(_paso("ml", "serie_banda", f"±{round(100 * max(abs(ult['alto']), abs(ult['bajo'])), 1)} %", lang,
+                         f"paso {ult['paso']} · n={ult['n']}",
+                         paso=ult["paso"], n=ult["n"], nivel=int(100 * float(cfg.get("banda", 0.8))),
+                         bajo=round(100 * ult["bajo"], 1), alto=round(100 * ult["alto"], 1),
+                         sesgo=round(100 * (ult.get("sesgo") or 0), 1)))
+    nota_tf = next((n for n in m.get("notas", []) if "TimesFM" in n), "")
+    if nota_tf:
+        out.append(_paso("ml", "serie_timesfm", "TimesFM", lang, nota_tf,
+                         estado="ok" if "no entró" not in nota_tf else "aviso", estado_txt=nota_tf))
+    return out
+
+
 def _ml(p, lang) -> list[dict]:
     r = p.resultados.get("ml")
     if not r or not r.ok or r.omitida or not p.ml:
         return []
     cfg, m = p.spec.get("ml") or {}, p.ml
+    if m.get("tipo") == "serie":
+        return _ml_serie(p, lang, cfg, m)
     notas = m.get("notas", [])
     met = m.get("metricas") or {}
     fuga = _int_en(next((n for n in notas if n.startswith("fuga")), ""), r"quitadas (\d+)")

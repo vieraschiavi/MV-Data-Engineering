@@ -16,7 +16,7 @@ import pandas as pd
 
 from . import proyecto
 
-NOMBRES = ["cobranzas", "ventas", "kash"]
+NOMBRES = ["cobranzas", "ventas", "kash", "cartera"]
 
 
 def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
@@ -184,7 +184,11 @@ def _ventas(carpeta: Path, seed: int = 42) -> dict:
             {"nombre": "Productos vendidos", "tabla": "fact_venta", "columna": "dim_producto_key", "agregacion": "count_distinct", "formato": "#,0"},
         ],
         "gobernanza": {"dueno": "BI Comercial", "descripciones": {"ventas.importe": "Unidades × precio unitario con descuento"}},
-        "ml": {"tabla": "fact_venta", "target": "importe", "tipo": "regresion", "fecha": None, "excluir": ["precio_unitario"]},
+        # Proyección de la venta diaria: lo que pide comercial. El backtest de
+        # origen móvil decide con qué modelo se proyecta y deja escrito si le
+        # gana o no a repetir la semana pasada.
+        "ml": {"tipo": "serie", "tabla": "fact_venta", "fecha": "fecha_key", "valor": "importe",
+               "frecuencia": "diaria", "horizonte": 14, "origenes": 12},
         "frescura": {"cada": "diaria", "tablas": {"productos": {"cada": "semanal"}, "sucursales": {"cada": "mensual"}}},
         "reporte": {"titulo": "Ventas · tablero comercial", "graficos": "auto"},
         "powerbi": {"generar": True, "nombre": "Ventas"},
@@ -349,11 +353,113 @@ def _kash(carpeta: Path, n: int = 6000, seed: int = 42) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Demo «cartera»: la cobranza mensual abierta por estado de gestión, que es la
+# forma en que una financiera mira su cartera. Replica el ESQUEMA de un tablero
+# real de cobranzas (estados de gestión, monto a cobrar vencido / del mes /
+# acumulado, cobrado, socios) con 36 meses de historia — lo mínimo para que un
+# backtest de origen móvil con horizonte de seis meses tenga algo que decir.
+# Los datos son 100 % sintéticos: cada estado tiene su nivel, su tendencia y su
+# estacionalidad propias, generados con semilla fija.
+ESTADOS_CARTERA = [
+    # (estado, nivel mensual, tendencia mensual, amplitud estacional, ruido, tipos de cliente)
+    ("Comercial/Normal", 450_000_000, -0.0015, 0.05, 0.04, [""]),
+    ("Cobranza/Mora Temprana", 230_000_000, 0.0020, 0.09, 0.06, [""]),
+    ("Cobranza/Negociación", 40_000_000, 0.0035, 0.12, 0.10, ["Puro", "Impuro"]),
+    ("Jurídica/Extrajudicial", 28_000_000, -0.0010, 0.15, 0.12, [""]),
+    ("Jurídica/Mora Tardía", 22_000_000, -0.0025, 0.18, 0.16, [""]),
+    ("Comercial/Suspensión", 5_500_000, 0.0040, 0.22, 0.20, [""]),
+    ("Contaduría/Fallecido", 2_300_000, 0.0005, 0.30, 0.35, [""]),
+]
+
+
+def _cartera(carpeta: Path, meses: int = 36, seed: int = 42) -> dict:
+    rng = np.random.default_rng(seed)
+    periodos = pd.date_range("2023-06-01", periods=meses, freq="MS")
+    filas = []
+    for estado, nivel, tend, amp, ruido, tipos in ESTADOS_CARTERA:
+        for tipo in tipos:
+            base = nivel / len(tipos)
+            for k, f in enumerate(periodos):
+                # Estacionalidad de cobranza uruguaya: enero y julio levantan
+                # por el aguinaldo, febrero cae por licencias.
+                est = amp * np.sin(2 * np.pi * (f.month - 3) / 12) + (0.06 if f.month in (1, 7) else 0.0)
+                cobrado = base * (1 + tend) ** k * (1 + est) * (1 + rng.normal(0, ruido))
+                vencido = cobrado * rng.uniform(0.2, 0.5)
+                del_mes = cobrado * rng.uniform(0.7, 1.1)
+                socios = int(max(1, cobrado / rng.uniform(6_000, 12_000)))
+                filas.append((f.date().isoformat(), f.year, f.month, estado, tipo or "N/A",
+                              round(del_mes, 2), round(vencido, 2), round(del_mes + vencido, 2),
+                              round(max(cobrado, 0), 2), socios, int(socios * rng.uniform(0.6, 0.95))))
+    cartera = pd.DataFrame(filas, columns=["fecha_obs", "anio", "mes", "estado", "tipo_cliente",
+                                           "monto_a_cobrar_del_mes", "monto_a_cobrar_vencido",
+                                           "monto_a_cobrar_acumulado", "total_cobrado",
+                                           "socios_a_cobrar", "socios_cobrados"])
+    # Defecto inyectado a propósito: dos meses cargados dos veces (el gate lo ve).
+    cartera = pd.concat([cartera, cartera.sample(2, random_state=seed)], ignore_index=True)
+    cartera.to_csv(carpeta / "cartera_mensual.csv", index=False, sep=";", decimal=",")
+    return {
+        "nombre": "Cartera demo",
+        "descripcion": "Cobranza mensual por estado de gestión: 36 meses, 7 estados (uno abierto por tipo de "
+                       "cliente). Proyección a 6 meses con backtest de origen móvil y banda de desvío por "
+                       "segmento. Datos 100 % sintéticos.",
+        "idioma": "es",
+        "fuentes": [{"nombre": "cartera", "tipo": "csv", "ruta": "cartera_mensual.csv",
+                     "opciones": {"sep": ";", "decimal": ","}}],
+        "silver": {"cartera": {"tipos": "auto", "fechas": ["fecha_obs"],
+                               "deduplicar": ["fecha_obs", "estado", "tipo_cliente"],
+                               "derivar": {"pct_cobrado": "total_cobrado / monto_a_cobrar_acumulado * 100",
+                                           "area_gestion": "df['estado'].str.split('/').str[0]"}}},
+        "calidad": {"minimo": 80, "reglas": [
+            {"tabla": "cartera", "columna": "total_cobrado", "tipo": "no_negativo", "critico": True},
+            {"tabla": "cartera", "columna": "estado", "tipo": "no_nulo", "critico": True},
+            {"tabla": "cartera", "columna": "pct_cobrado", "tipo": "rango", "min": 0, "max": 300, "critico": False},
+        ]},
+        "modelo": {
+            "dimensiones": [{"nombre": "dim_estado", "desde": "cartera", "clave": "estado",
+                             "atributos": ["area_gestion"], "scd": 1}],
+            "hechos": [{"nombre": "fact_cartera", "desde": "cartera", "fecha": "fecha_obs",
+                        "claves": {"estado": "dim_estado"},
+                        "medidas": ["total_cobrado", "monto_a_cobrar_vencido", "monto_a_cobrar_acumulado",
+                                    "socios_a_cobrar", "socios_cobrados"],
+                        }],
+            "calendario": "auto",
+        },
+        "vistas": {"v_cobranza_mes_estado": "SELECT c.anio_mes, d.estado, SUM(f.total_cobrado) cobrado, "
+                                            "SUM(f.monto_a_cobrar_vencido) vencido FROM gold.fact_cartera f "
+                                            "JOIN gold.dim_calendario c USING (fecha_key) "
+                                            "JOIN gold.dim_estado d USING (dim_estado_key) GROUP BY 1,2 ORDER BY 1,2"},
+        "kpis": [
+            {"nombre": "Total cobrado", "tabla": "fact_cartera", "columna": "total_cobrado", "agregacion": "sum", "formato": "#,0"},
+            {"nombre": "Monto vencido", "tabla": "fact_cartera", "columna": "monto_a_cobrar_vencido", "agregacion": "sum", "formato": "#,0"},
+            {"nombre": "Socios cobrados", "tabla": "fact_cartera", "columna": "socios_cobrados", "agregacion": "sum", "formato": "#,0"},
+        ],
+        "gobernanza": {"dueno": "Coordinación de BI · Cobranzas",
+                       "descripciones": {"cartera.total_cobrado": "Cobranza del mes por estado de gestión",
+                                         "cartera.monto_a_cobrar_vencido": "Saldo vencido pendiente al cierre del mes"}},
+        # Proyección a seis meses (30/60/90/120/150/180 días), un modelo por
+        # estado elegido por backtest, con la banda de desvío que ese modelo
+        # tuvo en los cortes anteriores.
+        # El set sale del almacén con SQL para recuperar el nombre del estado
+        # (en el hecho quedó como clave subrogada): se proyecta un modelo por
+        # estado × tipo de cliente, más el total.
+        "ml": {"tipo": "serie",
+               "sql": "SELECT f.fecha_key, d.estado, f.tipo_cliente, f.total_cobrado "
+                      "FROM gold.fact_cartera f JOIN gold.dim_estado d USING (dim_estado_key)",
+               "fecha": "fecha_key", "valor": "total_cobrado",
+               "frecuencia": "mensual", "horizonte": 6, "origenes": 7, "banda": 0.8,
+               "segmento": ["estado", "tipo_cliente"], "minimo_periodos": 24},
+        "frescura": {"cada": "mensual"},
+        "reporte": {"titulo": "Cartera · cobranza por estado", "graficos": "auto"},
+        "powerbi": {"generar": True, "nombre": "Cartera"},
+    }
+
+
 def crear(nombre: str, carpeta: Path) -> Path:
     if nombre not in NOMBRES:
         raise ValueError(f"demo desconocida; válidas: {NOMBRES}")
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
-    spec = {"cobranzas": _cobranzas, "ventas": _ventas, "kash": _kash}[nombre](carpeta)
+    spec = {"cobranzas": _cobranzas, "ventas": _ventas, "kash": _kash, "cartera": _cartera}[nombre](carpeta)
     spec = proyecto.normalizar(spec)
     return proyecto.guardar(spec, carpeta / "proyecto.yaml")

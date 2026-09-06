@@ -217,6 +217,83 @@ def _guardar_spec(spec: dict) -> None:
 ETAPA_DE_AREA = {"datos": "silver", "calidad": "calidad", "modelo": "gold", "gobernanza": "gobernanza", "bi": "reporte", "ml": "ml"}
 
 
+def _tabla_ml(p: Pipeline, nombre: str) -> pd.DataFrame | None:
+    """La tabla que dejó la etapa ML, de memoria o del disco (la app se
+    rerenderiza sin volver a correr el pipeline)."""
+    if nombre in p.gold:
+        return p.gold[nombre]
+    ruta = p.dirs["ml"] / f"{nombre}.parquet"
+    return pd.read_parquet(ruta) if ruta.exists() else None
+
+
+def _serie_proyectada(p: Pipeline, ev: dict, lang: str) -> None:
+    """La proyección con la evidencia que la respalda, en este orden: qué se
+    eligió y por qué, cómo le fue contra un pasado que ya se conoce, y recién
+    después el futuro con su banda de desvío."""
+    segmentos = ev.get("segmentos") or []
+    serie = _tabla_ml(p, "proyeccion")
+    comp = _tabla_ml(p, "proyeccion_backtest")
+    if serie is None:
+        st.json({"metricas": ev.get("metricas"), "notas": ev.get("notas", [])})
+        return
+    nombres = [s["segmento"] for s in segmentos] or sorted(serie["segmento"].unique())
+    sel = st.selectbox(t("pr_segmento", lang), nombres, key="pr_seg") if len(nombres) > 1 else nombres[0]
+    info = next((x for x in segmentos if x["segmento"] == sel), None) or {
+        "modelo": ev.get("modelo"), "metricas": ev.get("metricas"), "porque": ev.get("porque"),
+        "gana": (ev.get("eleccion") or {}).get("le_gana_a_la_referencia"), "bandas": ev.get("bandas") or []}
+    met = info.get("metricas") or {}
+    c = st.columns(4)
+    c[0].metric(t("pr_modelo", lang), info.get("modelo", "—"))
+    c[1].metric(t("pr_error", lang), f"{round(float(met.get('smape') or 0), 2)} %")
+    c[2].metric(t("pr_vs_ref", lang), f"{info.get('mejora_pct')} %" if info.get("mejora_pct") is not None else "—")
+    c[3].metric(t("pr_origenes", lang), met.get("origenes_backtest", 0))
+    (st.success if info.get("gana") else st.warning)(info.get("porque") or "—")
+
+    d = serie[serie["segmento"] == sel].assign(periodo=lambda x: pd.to_datetime(x["periodo"])).sort_values("periodo")
+    if comp is not None and len(comp):
+        cs = comp[comp["segmento"] == sel]
+        if len(cs):
+            st.markdown(f"**{t('pr_real_vs', lang)}**")
+            st.caption(t("pr_real_vs_pie", lang))
+            ult = cs[cs["corte"] == cs["corte"].max()].assign(periodo=lambda x: pd.to_datetime(x["periodo"]))
+            st.line_chart(ult.set_index("periodo")[["real", "proyectado"]])
+            st.dataframe(cs.groupby("paso").agg(**{
+                t("pr_n", lang): ("desvio_pct", "size"),
+                t("pr_desvio_medio", lang): ("desvio_pct", "mean"),
+                t("pr_desvio_abs", lang): ("desvio_pct", lambda x: x.abs().mean()),
+            }).round(2), use_container_width=True)
+
+    st.markdown(f"**{t('pr_futuro', lang)}**")
+    st.line_chart(pd.DataFrame({
+        t("pr_historia", lang): d["valor"].where(d["tipo"] == "historia"),
+        t("pr_proyeccion", lang): d["valor"].where(d["tipo"] == "proyeccion"),
+        t("pr_banda_baja", lang): d["banda_baja"], t("pr_banda_alta", lang): d["banda_alta"],
+    }).set_index(d["periodo"]))
+    fut = d[d["tipo"] == "proyeccion"]
+    if len(fut):
+        tabla = fut[["dias", "periodo", "valor", "banda_baja", "banda_alta"]].copy()
+        tabla["dias"] = tabla["dias"].astype(int)
+        tabla["periodo"] = tabla["periodo"].dt.strftime("%Y-%m-%d")
+        for c in ("valor", "banda_baja", "banda_alta"):
+            tabla[c] = pd.to_numeric(tabla[c], errors="coerce").round(0)
+        st.dataframe(tabla.rename(columns={
+            "dias": t("pr_dias", lang), "periodo": t("pr_periodo", lang), "valor": t("pr_proyeccion", lang),
+            "banda_baja": t("pr_banda_baja", lang), "banda_alta": t("pr_banda_alta", lang)}),
+            use_container_width=True, hide_index=True)
+    if len(segmentos) > 1:
+        st.markdown(f"**{t('pr_por_segmento', lang)}**")
+        st.dataframe(pd.DataFrame([{
+            t("pr_segmento", lang): x["segmento"], t("pr_modelo", lang): x["modelo"],
+            "sMAPE %": (x["metricas"] or {}).get("smape"), t("pr_vs_ref", lang): x["mejora_pct"],
+            t("pr_gana_col", lang): "✅" if x["gana"] else "—",
+            t("pr_periodos", lang): x.get("periodos")} for x in segmentos]), use_container_width=True, hide_index=True)
+    if ev.get("pesos_ensemble"):
+        st.caption(t("pr_pesos", lang) + " · " + ", ".join(f"{k} {round(100 * v)} %"
+                                                          for k, v in list(ev["pesos_ensemble"].items())[:6]))
+    for n in ev.get("notas", []):
+        st.caption(f"· {n}")
+
+
 def _aplicar_y_correr(sugs: list[dict]) -> int:
     nuevo, n = salud.aplicar_todas(p.spec, sugs)
     if n:
@@ -682,6 +759,8 @@ with tab_pipe:
                         cols[i % 4].metric(k["nombre"], k["valor"])
                 elif e == "dax" and ev.get("medidas"):
                     st.dataframe(pd.DataFrame(ev["medidas"]), use_container_width=True)
+                elif e == "ml" and ev.get("tipo") == "serie":
+                    _serie_proyectada(p, ev, lang)
                 elif e == "ml" and ev.get("metricas"):
                     st.json({"metricas": ev["metricas"], "importancia": ev.get("importancia", {}), "notas": ev.get("notas", [])})
                 elif e == "gobernanza" and ev.get("linaje"):
