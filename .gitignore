@@ -16,3 +16,6 @@ secretos/*
 datos/*
 !datos/.gitkeep
 .env
+
+# Videos: pesan y se generan; los publicados van aparte (ver landing/README.md).
+landing/video/*.mp4

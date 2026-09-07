@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MV Data Engineering · Tu pipeline de datos, entero y sin fallas silenciosas</title>
+<meta name="description" id="meta-desc" content="Cualquier proyecto de datos, de la fuente al reporte final, por etapas y sin fallas silenciosas.">
+<meta property="og:title" content="MV Data Engineering">
+<meta property="og:image" content="img/es_1_pipeline.jpg">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230b1b34'/><text y='68' x='50' text-anchor='middle' font-size='54' fill='%23f0b429' font-family='system-ui'>M</text></svg>">
+<style>
+/* Paleta del programa, para que la web y la app se vean de la misma familia. */
+:root{
+  --tinta:#0b1b34; --tinta-2:#122744; --linea:#1d3557; --papel:#f7f9fc;
+  --texto:#e8eef7; --texto-2:#9db0cc; --acento:#f0b429; --ok:#3ec9a7;
+  --ancho:1180px; --r:14px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--tinta);color:var(--texto);
+     font:16px/1.65 "Segoe UI",Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+img{max-width:100%;display:block}
+a{color:inherit}
+.wrap{max-width:var(--ancho);margin:0 auto;padding:0 24px}
+
+/* ---------- barra ---------- */
+header{position:sticky;top:0;z-index:50;background:rgba(11,27,52,.88);
+       backdrop-filter:blur(10px);border-bottom:1px solid var(--linea)}
+.barra{display:flex;align-items:center;gap:22px;height:64px}
+.marca{font-weight:700;letter-spacing:.2px;white-space:nowrap}
+.marca span{color:var(--acento)}
+nav{display:flex;gap:20px;margin-left:auto;font-size:14px;color:var(--texto-2)}
+nav a{text-decoration:none}
+nav a:hover{color:var(--texto)}
+.idiomas{display:flex;gap:4px;margin-left:16px}
+.idiomas button{background:transparent;border:1px solid var(--linea);color:var(--texto-2);
+  padding:5px 11px;border-radius:8px;cursor:pointer;font:inherit;font-size:13px;transition:.15s}
+.idiomas button:hover{color:var(--texto)}
+.idiomas button[aria-pressed="true"]{background:var(--acento);border-color:var(--acento);color:#26200a;font-weight:600}
+@media(max-width:860px){nav{display:none}}
+
+/* ---------- hero ---------- */
+.hero{padding:88px 0 64px;background:
+  radial-gradient(900px 420px at 15% -10%, rgba(240,180,41,.13), transparent 60%),
+  radial-gradient(700px 380px at 95% 10%, rgba(62,201,167,.10), transparent 60%)}
+.badge{display:inline-block;border:1px solid var(--acento);color:var(--acento);
+  border-radius:999px;padding:5px 14px;font-size:12px;letter-spacing:1.3px;font-weight:600}
+h1{font-size:clamp(32px,5.2vw,58px);line-height:1.1;margin:22px 0 18px;letter-spacing:-.5px}
+.sub{font-size:clamp(16px,2vw,20px);color:var(--texto-2);max-width:62ch}
+.botones{display:flex;gap:14px;flex-wrap:wrap;margin:32px 0 14px}
+.btn{display:inline-block;padding:14px 26px;border-radius:11px;text-decoration:none;
+  font-weight:600;border:1px solid transparent;cursor:pointer;font:inherit;font-weight:600;transition:.15s}
+.btn-1{background:var(--acento);color:#26200a}
+.btn-1:hover{filter:brightness(1.08)}
+.btn-2{border-color:var(--linea);color:var(--texto)}
+.btn-2:hover{border-color:var(--texto-2)}
+.nota{font-size:13px;color:var(--texto-2)}
+
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:56px}
+.kpi{background:var(--tinta-2);border:1px solid var(--linea);border-radius:var(--r);padding:22px}
+.kpi b{display:block;font-size:38px;line-height:1;color:var(--acento)}
+.kpi span{font-size:13px;color:var(--texto-2);display:block;margin-top:8px}
+@media(max-width:700px){.kpis{grid-template-columns:1fr}}
+
+/* ---------- secciones ---------- */
+section{padding:76px 0;border-top:1px solid var(--linea)}
+h2{font-size:clamp(24px,3.4vw,36px);margin:0 0 14px;letter-spacing:-.3px}
+.lead{color:var(--texto-2);max-width:70ch;margin:0 0 34px}
+
+.tres{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.card{background:var(--tinta-2);border:1px solid var(--linea);border-radius:var(--r);padding:24px}
+.card h3{margin:0 0 8px;font-size:17px}
+.card p{margin:0;color:var(--texto-2);font-size:14.5px}
+@media(max-width:860px){.tres{grid-template-columns:1fr}}
+
+.etapas{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.etapa{background:var(--tinta-2);border:1px solid var(--linea);border-radius:11px;padding:16px 18px}
+.etapa b{display:block;font-size:15px}
+.etapa i{font-style:normal;color:var(--acento);font-size:12px;font-weight:700}
+.etapa p{margin:6px 0 0;font-size:13px;color:var(--texto-2);line-height:1.5}
+@media(max-width:980px){.etapas{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.etapas{grid-template-columns:1fr}}
+
+figure{margin:0 0 34px}
+figure video,figure img{width:100%;border-radius:var(--r);border:1px solid var(--linea);background:#000}
+figcaption{color:var(--texto-2);font-size:14px;margin-top:12px}
+.aviso{background:rgba(240,180,41,.09);border:1px solid rgba(240,180,41,.35);
+  border-radius:11px;padding:14px 18px;color:var(--acento);font-size:14px}
+
+/* ---------- precios ---------- */
+.planes{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;align-items:stretch}
+.plan{background:var(--tinta-2);border:1px solid var(--linea);border-radius:var(--r);
+  padding:26px 22px;display:flex;flex-direction:column}
+.plan.destacado{border-color:var(--acento);box-shadow:0 0 0 1px var(--acento) inset}
+.plan .etiqueta{font-size:12px;color:var(--acento);font-weight:700;letter-spacing:1px;
+  text-transform:uppercase;min-height:16px}
+.plan h3{margin:10px 0 4px;font-size:20px}
+.precio{font-size:36px;font-weight:700;letter-spacing:-1px;margin:12px 0 2px}
+.precio small{font-size:14px;font-weight:400;color:var(--texto-2);letter-spacing:0}
+.plan p{color:var(--texto-2);font-size:14px;flex:1;margin:12px 0 20px}
+.plan .btn{text-align:center;width:100%}
+@media(max-width:980px){.planes{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.planes{grid-template-columns:1fr}}
+
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th,td{text-align:left;padding:13px 14px;border-bottom:1px solid var(--linea)}
+th{color:var(--texto-2);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.6px}
+tr.nuestro td{background:rgba(240,180,41,.08);font-weight:600}
+tr.nuestro td:first-child{color:var(--acento)}
+.tabla-scroll{overflow-x:auto}
+
+details{background:var(--tinta-2);border:1px solid var(--linea);border-radius:11px;
+  padding:16px 20px;margin-bottom:10px}
+summary{cursor:pointer;font-weight:600;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"+";color:var(--acento);font-weight:700;margin-right:10px}
+details[open] summary::before{content:"–"}
+details p{color:var(--texto-2);margin:12px 0 0;font-size:14.5px}
+
+.cierre{text-align:center;background:
+  radial-gradient(700px 300px at 50% 0%, rgba(240,180,41,.12), transparent 65%)}
+.cierre .botones{justify-content:center}
+footer{border-top:1px solid var(--linea);padding:34px 0;color:var(--texto-2);font-size:13px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap barra">
+    <div class="marca">MV <span>·</span> Data Engineering</div>
+    <nav>
+      <a href="#problema" data-i18n="nav_como"></a>
+      <a href="#etapas" data-i18n="nav_etapas"></a>
+      <a href="#video" data-i18n="nav_video"></a>
+      <a href="#capturas" data-i18n="nav_capturas"></a>
+      <a href="#precios" data-i18n="nav_precios"></a>
+      <a href="#faq" data-i18n="nav_faq"></a>
+    </nav>
+    <div class="idiomas" role="group" aria-label="Idioma">
+      <button data-lang="es" aria-pressed="true">ES</button>
+      <button data-lang="en" aria-pressed="false">EN</button>
+      <button data-lang="pt" aria-pressed="false">PT</button>
+    </div>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="badge" data-i18n="hero_badge"></span>
+    <h1 data-i18n="hero_h1"></h1>
+    <p class="sub" data-i18n="hero_sub"></p>
+    <div class="botones">
+      <a class="btn btn-1" href="#precios" data-i18n="hero_cta"></a>
+      <a class="btn btn-2" href="#video" data-i18n="hero_cta2"></a>
+    </div>
+    <p class="nota" data-i18n="hero_nota"></p>
+    <div class="kpis">
+      <div class="kpi"><b data-i18n="kpi1_n"></b><span data-i18n="kpi1_l"></span></div>
+      <div class="kpi"><b data-i18n="kpi2_n"></b><span data-i18n="kpi2_l"></span></div>
+      <div class="kpi"><b data-i18n="kpi3_n"></b><span data-i18n="kpi3_l"></span></div>
+    </div>
+  </div>
+</div>
+
+<section id="problema">
+  <div class="wrap">
+    <h2 data-i18n="prob_t"></h2>
+    <p class="lead" data-i18n="prob_p"></p>
+    <div class="tres">
+      <div class="card"><h3 data-i18n="prob_1_t"></h3><p data-i18n="prob_1_d"></p></div>
+      <div class="card"><h3 data-i18n="prob_2_t"></h3><p data-i18n="prob_2_d"></p></div>
+      <div class="card"><h3 data-i18n="prob_3_t"></h3><p data-i18n="prob_3_d"></p></div>
+    </div>
+  </div>
+</section>
+
+<section id="etapas">
+  <div class="wrap">
+    <h2 data-i18n="etapas_t"></h2>
+    <p class="lead" data-i18n="etapas_p"></p>
+    <div class="etapas" id="grilla-etapas"></div>
+  </div>
+</section>
+
+<section id="video">
+  <div class="wrap">
+    <h2 data-i18n="video_com_t"></h2>
+    <p class="lead" data-i18n="video_com_p"></p>
+    <figure>
+      <video id="v-comercial" controls preload="none" playsinline poster="img/es_1_pipeline.jpg"></video>
+    </figure>
+    <h2 data-i18n="video_t"></h2>
+    <p class="lead" data-i18n="video_p"></p>
+    <figure>
+      <video id="v-demo" controls preload="none" playsinline poster="img/es_2_salud.jpg"></video>
+    </figure>
+    <p class="aviso" id="aviso-video" data-i18n="video_falta" hidden></p>
+  </div>
+</section>
+
+<section id="capturas">
+  <div class="wrap">
+    <h2 data-i18n="cap_t"></h2>
+    <p class="lead" data-i18n="cap_p"></p>
+    <div id="galeria"></div>
+  </div>
+</section>
+
+<section id="precios">
+  <div class="wrap">
+    <h2 data-i18n="precios_t"></h2>
+    <p class="lead" data-i18n="precios_p"></p>
+    <div class="planes" id="planes"></div>
+
+    <h2 style="margin-top:64px" data-i18n="comparativa_t"></h2>
+    <div class="tabla-scroll">
+      <table>
+        <thead><tr>
+          <th data-i18n="comp_h1"></th><th data-i18n="comp_h2"></th><th data-i18n="comp_h3"></th>
+        </tr></thead>
+        <tbody>
+          <tr><td data-i18n="comp_1"></td><td data-i18n="comp_1b"></td><td data-i18n="comp_1c"></td></tr>
+          <tr><td data-i18n="comp_2"></td><td data-i18n="comp_2b"></td><td data-i18n="comp_2c"></td></tr>
+          <tr><td data-i18n="comp_3"></td><td data-i18n="comp_3b"></td><td data-i18n="comp_3c"></td></tr>
+          <tr class="nuestro"><td data-i18n="comp_4"></td><td data-i18n="comp_4b"></td><td data-i18n="comp_4c"></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="nota" style="margin-top:14px" data-i18n="comp_nota"></p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2 data-i18n="faq_t"></h2>
+    <div id="faqs"></div>
+  </div>
+</section>
+
+<section class="cierre">
+  <div class="wrap">
+    <h2 data-i18n="cta_final_t"></h2>
+    <p class="lead" style="margin-inline:auto" data-i18n="cta_final_p"></p>
+    <div class="botones">
+      <a class="btn btn-1" href="#precios" data-i18n="descargar"></a>
+    </div>
+  </div>
+</section>
+
+<footer><div class="wrap"><span data-i18n="footer_nota"></span> · © 2026 Martín Viera</div></footer>
+
+<script src="i18n.js"></script>
+<script src="precios.js"></script>
+<script>
+// ---------------------------------------------------------------- idioma
+// El idioma es UN estado y lo cambia todo junto: textos, capturas y el video
+// con su locución. Es el punto de tener un diccionario y no tres HTML.
+const LANGS = ["es", "en", "pt"];
+const pedido = new URLSearchParams(location.search).get("lang");
+const guardado = (() => { try { return localStorage.getItem("mvde_lang"); } catch { return null; } })();
+let lang = LANGS.includes(pedido) ? pedido
+         : LANGS.includes(guardado) ? guardado
+         : LANGS.find(l => (navigator.language || "es").toLowerCase().startsWith(l)) || "es";
+
+const CAPTURAS = [
+  { archivo: "1_pipeline",         en: "1_pipeline",        pt: "1_pipeline",        pie: "cap_1" },
+  { archivo: "2_salud",            en: "2_health",          pt: "2_saude",           pie: "cap_2" },
+  { archivo: "3_cargas",           en: "3_loads",           pt: "3_cargas",          pie: "cap_3" },
+  { archivo: "4_transformaciones", en: "4_transformations", pt: "4_transformacoes",  pie: "cap_4" },
+  { archivo: "5_relevamiento",     en: "5_discovery",       pt: "5_levantamento",    pie: "cap_5" },
+];
+
+function pintar() {
+  const d = T[lang];
+  document.documentElement.lang = d.doc_lang;
+  document.getElementById("meta-desc").content = d.meta_desc;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const v = d[el.dataset.i18n];
+    if (v !== undefined) el.textContent = v;
+  });
+  document.querySelectorAll(".idiomas button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+
+  // Las 12 etapas
+  document.getElementById("grilla-etapas").innerHTML = Array.from({ length: 12 }, (_, i) => {
+    const n = i + 1;
+    return `<div class="etapa"><i>${String(n).padStart(2, "0")}</i>
+      <b>${d["e" + n]}</b><p>${d["e" + n + "d"]}</p></div>`;
+  }).join("");
+
+  // Capturas del idioma elegido
+  document.getElementById("galeria").innerHTML = CAPTURAS.map(c => {
+    const base = lang === "es" ? c.archivo : c[lang];
+    return `<figure><img src="img/${lang}_${base}.jpg" loading="lazy"
+      alt="${d[c.pie]}"><figcaption>${d[c.pie]}</figcaption></figure>`;
+  }).join("");
+
+  // Video del idioma elegido. Si todavía no existe, se dice — no se deja un
+  // reproductor roto, que es peor que no tener video.
+  let faltaAlguno = false;
+  [["v-comercial", "MVDataEngineering_Comercial"], ["v-demo", "MVDataEngineering_Demo"]].forEach(([id, base]) => {
+    const v = document.getElementById(id);
+    const src = `video/${base}_${lang}.mp4`;
+    v.src = src;
+    v.onerror = () => { v.closest("figure").hidden = true; faltaAlguno = true; marcarAviso(); };
+    v.onloadeddata = () => { v.closest("figure").hidden = false; };
+  });
+  function marcarAviso() { document.getElementById("aviso-video").hidden = false; }
+
+  // Planes
+  document.getElementById("planes").innerHTML = [
+    { k: "demo", n: "plan_demo", des: "plan_demo_d", cta: "descargar", destacado: false },
+    { k: "licencia", n: "plan_lic", des: "plan_lic_d", cta: "comprar", destacado: true },
+    { k: "professional", n: "plan_pro", des: "plan_pro_d", cta: "comprar", destacado: false },
+    { k: "mensual", n: "plan_mes", des: "plan_mes_d", cta: "suscribir", destacado: false },
+  ].map(p => {
+    const pr = PRECIOS[p.k];
+    const monto = pr.usd === 0 ? d.gratis : `USD&nbsp;${pr.usd}`;
+    const unidad = pr.tipo === "unico" ? d.unico : pr.tipo === "mes" ? d.pormes : "";
+    return `<div class="plan${p.destacado ? " destacado" : ""}">
+      <span class="etiqueta">${p.destacado ? "★" : ""}</span>
+      <h3>${d[p.n]}</h3>
+      <div class="precio">${monto}${unidad ? ` <small>${unidad}</small>` : ""}</div>
+      <p>${d[p.des]}</p>
+      <a class="btn ${p.destacado ? "btn-1" : "btn-2"}" href="${
+        p.k === "demo" ? "#descarga" : `pago.html?plan=${p.k}&lang=${lang}`}">${d[p.cta]}</a>
+    </div>`;
+  }).join("");
+
+  // FAQ
+  document.getElementById("faqs").innerHTML = [1, 2, 3, 4, 5].map(i =>
+    `<details><summary>${d["faq_" + i]}</summary><p>${d["faq_" + i + "r"]}</p></details>`).join("");
+
+  try { localStorage.setItem("mvde_lang", lang); } catch { /* modo privado: no pasa nada */ }
+}
+
+document.querySelectorAll(".idiomas button").forEach(b =>
+  b.addEventListener("click", () => { lang = b.dataset.lang; pintar(); }));
+pintar();
+</script>
+</body>
+</html>

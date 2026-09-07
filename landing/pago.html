@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MV Data Engineering · Pago</title>
+<style>
+:root{--tinta:#0b1b34;--tinta-2:#122744;--linea:#1d3557;--texto:#e8eef7;--texto-2:#9db0cc;--acento:#f0b429}
+*{box-sizing:border-box}
+body{margin:0;background:var(--tinta);color:var(--texto);font:16px/1.6 "Segoe UI",Inter,system-ui,sans-serif;
+     display:grid;place-items:center;min-height:100vh;padding:24px}
+.caja{background:var(--tinta-2);border:1px solid var(--linea);border-radius:16px;padding:36px;max-width:520px;width:100%}
+h1{margin:0 0 6px;font-size:24px}
+.plan{color:var(--acento);font-weight:600;margin-bottom:22px}
+.monto{font-size:40px;font-weight:700;letter-spacing:-1px;margin:0}
+.monto small{font-size:14px;font-weight:400;color:var(--texto-2)}
+label{display:block;font-size:13px;color:var(--texto-2);margin:22px 0 6px}
+input{width:100%;padding:13px 14px;border-radius:10px;border:1px solid var(--linea);
+      background:var(--tinta);color:var(--texto);font:inherit}
+button{width:100%;margin-top:22px;padding:15px;border:0;border-radius:11px;background:var(--acento);
+       color:#26200a;font:inherit;font-weight:700;cursor:pointer}
+button[disabled]{opacity:.6;cursor:default}
+.nota{font-size:13px;color:var(--texto-2);margin-top:18px}
+.err{background:rgba(220,80,80,.12);border:1px solid rgba(220,80,80,.5);color:#ffb4b4;
+     border-radius:10px;padding:12px 14px;margin-top:18px;font-size:14px}
+a{color:var(--acento)}
+</style></head><body>
+<div class="caja">
+  <h1>MV Data Engineering</h1>
+  <div class="plan" id="plan"></div>
+  <p class="monto" id="monto"></p>
+  <p class="nota" id="conversion"></p>
+  <label for="email" id="lbl-email">Correo donde recibís la licencia</label>
+  <input id="email" type="email" autocomplete="email" placeholder="vos@empresa.com" required>
+  <button id="pagar">Ir a MercadoPago</button>
+  <div class="err" id="err" hidden></div>
+  <p class="nota"><a href="index.html" id="volver">← Volver</a></p>
+</div>
+<script src="i18n.js"></script><script src="precios.js"></script>
+<script>
+const q = new URLSearchParams(location.search);
+const plan = q.get("plan") || "licencia";
+const lang = ["es","en","pt"].includes(q.get("lang")) ? q.get("lang") : "es";
+const d = T[lang], pr = PRECIOS[plan];
+const TASA_UYU = 40;   // referencia; el importe real lo calcula el servidor
+
+document.documentElement.lang = d.doc_lang;
+if (!pr || plan === "demo") { location.replace(`index.html?lang=${lang}#precios`); }
+document.getElementById("plan").textContent = d["plan_" + ({licencia:"lic",professional:"pro",mensual:"mes"}[plan])];
+document.getElementById("monto").innerHTML = `USD&nbsp;${pr.usd} <small>${pr.tipo === "mes" ? d.pormes : d.unico}</small>`;
+// Se dice ANTES de pagar en qué moneda se cobra: la cuenta es uruguaya y el
+// cargo llega en pesos. Enterarse en el resumen de la tarjeta es una queja.
+document.getElementById("conversion").textContent =
+  { es: `Se cobra en pesos uruguayos al tipo de cambio del día (≈ $U ${(pr.usd*TASA_UYU).toLocaleString("es-UY")}).`,
+    en: `Charged in Uruguayan pesos at the day's rate (≈ $U ${(pr.usd*TASA_UYU).toLocaleString("en-US")}).`,
+    pt: `Cobra-se em pesos uruguaios ao câmbio do dia (≈ $U ${(pr.usd*TASA_UYU).toLocaleString("pt-BR")}).` }[lang];
+document.getElementById("volver").href = `index.html?lang=${lang}#precios`;
+document.getElementById("lbl-email").textContent =
+  { es:"Correo donde recibís la licencia", en:"Email where you'll get the licence",
+    pt:"E-mail onde você recebe a licença" }[lang];
+document.getElementById("pagar").textContent = d.comprar;
+
+const btn = document.getElementById("pagar"), err = document.getElementById("err");
+btn.addEventListener("click", async () => {
+  const email = document.getElementById("email").value.trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    err.hidden = false;
+    err.textContent = { es:"Poné un correo válido: ahí te llega la licencia.",
+      en:"Enter a valid email: that's where the licence goes.",
+      pt:"Digite um e-mail válido: é para lá que vai a licença." }[lang];
+    return;
+  }
+  btn.disabled = true; err.hidden = true;
+  try {
+    const r = await fetch("/api/checkout", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ plan, lang, email }) });
+    const data = await r.json();
+    if (!data.ok || !data.url) throw new Error(data.error || "sin url");
+    location.href = data.url;
+  } catch (e) {
+    btn.disabled = false; err.hidden = false;
+    err.textContent = { es:"No se pudo iniciar el pago. Probá de nuevo o escribinos.",
+      en:"Couldn't start the payment. Try again or write to us.",
+      pt:"Não foi possível iniciar o pagamento. Tente de novo ou escreva para nós." }[lang];
+  }
+});
+</script></body></html>
