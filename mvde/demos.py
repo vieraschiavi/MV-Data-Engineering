@@ -107,6 +107,16 @@ def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
         ],
         "gobernanza": {"dueno": "BI Cobranzas", "pii": ["clientes.email"],
                        "descripciones": {"clientes.id_cliente": "Identificador del cliente", "cuotas.meses_atraso": "0 = al día, 1..9 meses de atraso",
+                                         "id_cliente": "Identificador del cliente",
+                                         "sexo": "Sexo del titular (1/2), como viene del sistema de origen",
+                                         "educacion": "Nivel educativo declarado (0 = sin dato)",
+                                         "edad": "Edad del titular en años",
+                                         "sucursal": "Sucursal que originó el crédito",
+                                         "limite_credito": "Límite de crédito asignado, en pesos",
+                                         "email": "Correo de contacto del titular",
+                                         "fecha_vencimiento": "Fecha de vencimiento de la cuota",
+                                         "monto_cuota": "Importe de la cuota que vence",
+                                         "canal": "Canal por el que se cobró o se intentó cobrar",
                                          "clientes.default_proximo_mes": "1 si no paga la cuota del mes siguiente", "cuotas.monto_pagado": "Pagado en el mes (moneda local)"}},
         "ml": {"sql": "SELECT r.default_proximo_mes, d.edad, d.educacion, d.sucursal, d.limite_credito, d.sexo, "
                       "SUM(CASE WHEN f.en_mora THEN 1 ELSE 0 END) meses_en_mora, MAX(f.meses_atraso) max_atraso, "
@@ -183,7 +193,15 @@ def _ventas(carpeta: Path, seed: int = 42) -> dict:
              "denominador": {"tabla": "fact_venta", "agregacion": "count"}, "formato": "#,0.00"},
             {"nombre": "Productos vendidos", "tabla": "fact_venta", "columna": "dim_producto_key", "agregacion": "count_distinct", "formato": "#,0"},
         ],
-        "gobernanza": {"dueno": "BI Comercial", "descripciones": {"ventas.importe": "Unidades × precio unitario con descuento"}},
+        "gobernanza": {"dueno": "BI Comercial", "descripciones": {
+            "importe": "Unidades × precio unitario con descuento",
+            "fecha": "Fecha de la venta", "id_sucursal": "Identificador de la sucursal que vendió",
+            "sku": "Código del producto vendido", "unidades": "Unidades vendidas en la operación",
+            "precio_unitario": "Precio de lista por unidad, antes del descuento",
+            "descuento": "Descuento aplicado, en tanto por uno (0,1 = 10 %)",
+            "sucursal": "Nombre de la sucursal", "region": "Región comercial de la sucursal",
+            "producto": "Nombre del producto", "categoria": "Categoría comercial del producto",
+            "precio_lista": "Precio de lista vigente del producto, sin descuento"}},
         # Proyección de la venta diaria: lo que pide comercial. El backtest de
         # origen móvil decide con qué modelo se proyecta y deja escrito si le
         # gana o no a repetir la semana pasada.
@@ -338,7 +356,23 @@ def _kash(carpeta: Path, n: int = 6000, seed: int = 42) -> dict:
             {"nombre": "Valor esperado de recupero", "tabla": "ml_scores", "columna": "valor_esperado_recupero", "agregacion": "sum", "formato": "#,0", "por": "estrategia"},
         ],
         "gobernanza": {"dueno": "BI Cobranzas", "pii": [],
-                       "descripciones": {"kash_train.NMesesConPago_VAL": "Meses con pago en la ventana futura (3 meses): el target del backtest",
+                       # Las series mensuales se documentan con un bucle: doce
+                       # descripciones escritas a mano serían doce lugares donde
+                       # equivocarse al agregar el mes trece.
+                       "descripciones": {**{f"Monto_M{k}": f"Monto pagado en el mes {k} de la ventana de 12 meses" for k in range(1, 13)},
+                                         **{f"Pago_M{k}": f"1 si hubo algún pago en el mes {k} de la ventana, 0 si no" for k in range(1, 13)},
+                                         "IdCliente": "Identificador del socio",
+                                         "Estado": "Estado de gestión del socio a la fecha de corte",
+                                         "SubEstado": "Subestado dentro del estado de gestión",
+                                         "ScoreCash": "Score interno de riesgo del socio",
+                                         "CuotaEfectivaRef": "Cuota de referencia usada para dimensionar la deuda",
+                                         "DiasAtraso_Actual": "Días de atraso a la fecha de corte",
+                                         "NMesesConPago_12M": "Meses con pago en los 12 meses previos al corte",
+                                         "NMesesConPago_TRAIN": "Meses con pago en la ventana de entrenamiento",
+                                         "mes": "Mes de la serie despivoteada",
+                                         "monto_pagado": "Monto pagado en ese mes",
+                                         "pago": "1 si hubo pago en ese mes, 0 si no",
+                                         "kash_train.NMesesConPago_VAL": "Meses con pago en la ventana futura (3 meses): el target del backtest",
                                          "kash_train.pago_val": "1 si el cliente pagó al menos un mes de la ventana futura",
                                          "kash_train.ScoreCash": "Banda de score interno A (mejor) a F- y SIN_SCORE",
                                          "kash_train.DiasAtraso_Actual": "Días de atraso a la fecha de corte"}},
@@ -435,8 +469,17 @@ def _cartera(carpeta: Path, meses: int = 36, seed: int = 42) -> dict:
             {"nombre": "Socios cobrados", "tabla": "fact_cartera", "columna": "socios_cobrados", "agregacion": "sum", "formato": "#,0"},
         ],
         "gobernanza": {"dueno": "Coordinación de BI · Cobranzas",
-                       "descripciones": {"cartera.total_cobrado": "Cobranza del mes por estado de gestión",
-                                         "cartera.monto_a_cobrar_vencido": "Saldo vencido pendiente al cierre del mes"}},
+                       "descripciones": {
+                           "fecha_obs": "Fecha de observación: primer día del mes al que corresponde el corte",
+                           "anio": "Año del corte", "mes": "Mes del corte (1-12)",
+                           "estado": "Estado de gestión de la cartera (área / situación del socio)",
+                           "tipo_cliente": "Subclasificación del socio dentro del estado; «N/A» cuando el estado no la usa",
+                           "monto_a_cobrar_del_mes": "Cuotas que vencen en el mes, sin arrastre",
+                           "monto_a_cobrar_vencido": "Saldo vencido pendiente al cierre del mes",
+                           "monto_a_cobrar_acumulado": "Del mes más el vencido: el total exigible",
+                           "total_cobrado": "Cobranza del mes por estado de gestión",
+                           "socios_a_cobrar": "Socios con algo exigible en el mes",
+                           "socios_cobrados": "Socios que pagaron algo en el mes"}},
         # Proyección a seis meses (30/60/90/120/150/180 días), un modelo por
         # estado elegido por backtest, con la banda de desvío que ese modelo
         # tuvo en los cortes anteriores.

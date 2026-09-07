@@ -77,3 +77,28 @@ def test_dimension_pasa_de_scd1_a_scd2_sin_romper():
     assert "is_current" not in previa.columns
     nueva = gold.dimension(df, {"nombre": "dim_p", "clave": "sku", "scd": 2}, existente=previa)
     assert nueva["is_current"].all() and (nueva["version"] == 1).all() and len(nueva) == 2
+
+
+def test_la_clave_puede_ser_compuesta_y_eso_no_es_un_defecto(tmp_path):
+    """Una tabla de hechos identificada por fecha + estado + tipo está bien
+    modelada. Mirar sólo columnas sueltas la marcaba «sin clave» y le restaba
+    15 puntos a un diseño correcto."""
+    import pandas as pd
+    df = pd.DataFrame({"fecha": ["2025-01", "2025-01", "2025-02", "2025-02"],
+                       "estado": ["A", "B", "A", "B"], "monto": [1.0, 2.0, 3.0, 4.0]})
+    assert salud._clave_candidata(df) == "fecha + estado"
+    assert salud._clave_candidata(df, ["fecha", "estado"]) == "fecha + estado"
+    # Una columna sola y única gana sobre la compuesta: es la clave más simple.
+    assert salud._clave_candidata(df.assign(id=[1, 2, 3, 4])) == "id"
+    # Sin ninguna combinación que identifique, no se inventa una clave.
+    repetida = pd.DataFrame({"a": [1, 1], "b": ["x", "x"]})
+    assert salud._clave_candidata(repetida) is None
+
+
+def test_una_clave_compuesta_no_genera_una_regla_de_unicidad_imposible(pelado):
+    """`unico` se declara sobre UNA columna; con clave compuesta no hay columna
+    que nombrar, y sugerir «fecha + estado» generaba una regla sobre una columna
+    inexistente que tumbaba el gate de calidad."""
+    for s in salud.sugerencias(pelado):
+        if s["codigo"] == "regla_unico":
+            assert " + " not in s["parche"]["regla"]["columna"]

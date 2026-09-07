@@ -18,6 +18,8 @@ usó para elegir nada, y se informa la brecha selección→holdout.
 """
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pandas as pd
 
@@ -56,13 +58,31 @@ def _preparar(df: pd.DataFrame, cfg: dict, columnas: list[str] | None = None) ->
     return X, notas
 
 
+def _huella(df: pd.DataFrame) -> np.ndarray:
+    """Un número estable por fila, que depende del CONTENIDO y no del orden en
+    que llegó.
+
+    Hace falta para desempatar: un set armado con SQL sale de DuckDB sin orden
+    garantizado (no hay `ORDER BY`), y el orden cambia entre corridas. Si el
+    desempate depende de cómo vino el DataFrame, el corte 60/20/20 cae en otro
+    lado cada vez: otro holdout, otra tasa base, otro AUC y hasta otro modelo
+    ganador. Medido: la misma demo daba AUC 0,6902 con Regresión logística y
+    0,7109 con Random Forest sobre datos idénticos."""
+    texto = df.astype(str).agg("\x1f".join, axis=1)
+    return np.array([int(hashlib.blake2b(t.encode(), digest_size=8).hexdigest(), 16) for t in texto])
+
+
 def _cortes(df: pd.DataFrame, cfg: dict, notas: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    huella = _huella(df)
     if cfg.get("fecha") and cfg["fecha"] in df.columns:
-        orden = np.argsort(pd.to_datetime(df[cfg["fecha"]]).values, kind="stable")
+        fechas = pd.to_datetime(df[cfg["fecha"]]).values
+        # lexsort ordena por la ÚLTIMA clave primero: fecha manda, la huella
+        # desempata. Así el corte es el mismo venga el set de donde venga.
+        orden = np.lexsort((huella, fechas))
         notas.append(f"corte temporal por {cfg['fecha']}: entreno con el pasado, selecciono y mido con el futuro")
     else:
-        orden = np.random.default_rng(42).permutation(len(df))
-        notas.append("sin columna de fecha: corte aleatorio con semilla 42")
+        orden = np.argsort(huella, kind="stable")
+        notas.append("sin columna de fecha: corte por huella de contenido (reproducible)")
     n = len(df)
     a, b = int(n * 0.6), int(n * 0.8)
     return orden[:a], orden[a:b], orden[b:]

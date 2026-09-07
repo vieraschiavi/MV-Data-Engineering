@@ -379,7 +379,7 @@ def test_hay_medidas_dax_para_la_proyeccion_y_su_backtest():
     assert {"Real (backtest)", "Proyectado (backtest)", "Desvío del backtest %"} <= nombres
     # Histórico y proyectado se separan por `tipo`: si no, la línea se duplica.
     proy = next(m for m in med if m["nombre"] == "Proyectado")
-    assert 'proyeccion[tipo] = "proyeccion"' in proy["expresion"]
+    assert 'KEEPFILTERS ( proyeccion[tipo] = "proyeccion" )' in proy["expresion"], "sin KEEPFILTERS el filtro pisa el del visual (R18)"
     # Y sin la tabla no se generan medidas colgadas.
     _txt2, med2 = dax.generar({"kpis": []}, ["fact_x"])
     assert not [m for m in med2 if m["tabla"].startswith("proyeccion")]

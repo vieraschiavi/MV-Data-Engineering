@@ -37,14 +37,19 @@ def _medidas_proyeccion(spec: dict) -> list[dict]:
     filtra por ahí. La banda no se promedia: se suma, porque al agrupar por mes
     lo que se quiere es el piso y el techo del total de ese mes."""
     unidad = (spec.get("ml") or {}).get("valor") or "valor"
+    # KEEPFILTERS no es decorativo: sin él, Power BI expande el filtro de `tipo`
+    # a ALL sobre esa columna y REEMPLAZA el filtro que trae el visual en vez de
+    # cruzarlo. En una tabla abierta por `tipo`, las dos filas mostrarían el
+    # mismo número — sin error y con un valor plausible, que es lo que lo hace
+    # difícil de ver. Lo detecta la regla R18 de la auditoría del modelo.
     m = [
-        {"nombre": "Histórico", "expresion": 'CALCULATE ( SUM ( proyeccion[valor] ), proyeccion[tipo] = "historia" )',
+        {"nombre": "Histórico", "expresion": 'CALCULATE ( SUM ( proyeccion[valor] ), KEEPFILTERS ( proyeccion[tipo] = "historia" ) )',
          "descripcion": f"{unidad} realmente observado (la parte de la línea que ya pasó)"},
-        {"nombre": "Proyectado", "expresion": 'CALCULATE ( SUM ( proyeccion[valor] ), proyeccion[tipo] = "proyeccion" )',
+        {"nombre": "Proyectado", "expresion": 'CALCULATE ( SUM ( proyeccion[valor] ), KEEPFILTERS ( proyeccion[tipo] = "proyeccion" ) )',
          "descripcion": f"{unidad} proyectado por el modelo elegido en el backtest"},
-        {"nombre": "Banda baja", "expresion": 'CALCULATE ( SUM ( proyeccion[banda_baja] ), proyeccion[tipo] = "proyeccion" )',
+        {"nombre": "Banda baja", "expresion": 'CALCULATE ( SUM ( proyeccion[banda_baja] ), KEEPFILTERS ( proyeccion[tipo] = "proyeccion" ) )',
          "descripcion": "Piso de la banda de desvío, medido sobre los errores del backtest"},
-        {"nombre": "Banda alta", "expresion": 'CALCULATE ( SUM ( proyeccion[banda_alta] ), proyeccion[tipo] = "proyeccion" )',
+        {"nombre": "Banda alta", "expresion": 'CALCULATE ( SUM ( proyeccion[banda_alta] ), KEEPFILTERS ( proyeccion[tipo] = "proyeccion" ) )',
          "descripcion": "Techo de la banda de desvío, medido sobre los errores del backtest"},
         {"nombre": "Ancho de banda %", "formato": "0.0%",
          "expresion": "DIVIDE ( [Banda alta] - [Banda baja], [Proyectado] )",

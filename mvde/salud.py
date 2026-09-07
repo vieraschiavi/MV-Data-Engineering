@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import json
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 
 import pandas as pd
@@ -31,13 +32,39 @@ def _pct(n, d) -> float:
     return round(100.0 * n / d, 1) if d else 0.0
 
 
-def _clave_candidata(df: pd.DataFrame) -> str | None:
-    for c in df.columns:
-        if c.endswith("_key") or c.endswith("_hash"):
-            continue
+# Cuántas columnas puede tener una clave compuesta antes de dejar de ser una
+# clave y pasar a ser «toda la fila». Con más de eso no se está identificando
+# nada: se está diciendo que no hay clave.
+MAX_COLS_CLAVE = 4
+
+
+def _clave_candidata(df: pd.DataFrame, declarada: list[str] | None = None) -> str | None:
+    """La clave de la tabla, simple o COMPUESTA.
+
+    Una tabla de hechos identificada por fecha + estado + tipo de cliente está
+    perfectamente modelada; mirar sólo columnas sueltas la marcaba como «sin
+    clave» y le restaba 15 puntos a un diseño correcto. Se prueba primero la
+    clave que el YAML declara en `silver.deduplicar`, que es exactamente eso:
+    la declaración de qué hace única a una fila."""
+    def _usable(c: str) -> bool:
         s = df[c]
-        if s.notna().all() and s.is_unique and (pd.api.types.is_integer_dtype(s) or pd.api.types.is_string_dtype(s) or s.dtype == object):
+        return c in df.columns and not c.endswith(("_key", "_hash")) and s.notna().all()
+
+    if declarada:
+        cols = [c for c in declarada if _usable(c)]
+        if cols and not df.duplicated(subset=cols).any():
+            return " + ".join(cols)
+    candidatas = [c for c in df.columns if _usable(c) and (
+        pd.api.types.is_integer_dtype(df[c]) or pd.api.types.is_string_dtype(df[c])
+        or df[c].dtype == object or pd.api.types.is_datetime64_any_dtype(df[c]))]
+    for c in candidatas:
+        if df[c].is_unique:
             return c
+    # Ninguna sola alcanza: se busca la combinación más chica que sí.
+    for n in range(2, MAX_COLS_CLAVE + 1):
+        for combo in combinations(candidatas, n):
+            if not df.duplicated(subset=list(combo)).any():
+                return " + ".join(combo)
     return None
 
 
@@ -83,9 +110,13 @@ def evaluar(pipeline) -> dict:
     if pipeline.silver:
         cols = sum(len(df.columns) for df in pipeline.silver.values())
         mal_tipadas = sum(1 for df in pipeline.silver.values() for c in df.columns if _texto_que_parece_numero(df[c]))
-        con_clave = sum(1 for df in pipeline.silver.values() if _clave_candidata(df))
+        cfg_silver = pipeline.spec.get("silver") or {}
+        claves = {n: _clave_candidata(df, (cfg_silver.get(n) or {}).get("deduplicar"))
+                  for n, df in pipeline.silver.items()}
+        con_clave = sum(1 for v in claves.values() if v)
         p = 100 - _pct(mal_tipadas, cols) * 2 - (0 if con_clave == len(pipeline.silver) else 15)
-        areas["datos"] = {"puntaje": max(0, round(p, 1)), "detalle": f"{cols} columnas, {mal_tipadas} texto-que-es-número, {con_clave}/{len(pipeline.silver)} tablas con clave única"}
+        areas["datos"] = {"puntaje": max(0, round(p, 1)), "detalle": f"{cols} columnas, {mal_tipadas} texto-que-es-número, {con_clave}/{len(pipeline.silver)} tablas con clave única"
+                             + (f" ({'; '.join(f'{t}: {k}' for t, k in claves.items() if k)})" if con_clave else "")}
     # calidad: gate + cobertura de reglas declaradas
     if pipeline.calidad:
         declaradas = spec.get("calidad", {}).get("reglas", []) or []
@@ -175,9 +206,13 @@ def sugerencias(pipeline) -> list[dict]:
     def tiene(tabla, tipo, col=None):
         return any(x["tabla"] == tabla and x["tipo"] == tipo and (col is None or x.get("columna") == col) for x in reglas)
 
+    cfg_silver = pipeline.spec.get("silver") or {}
     for nombre, df in pipeline.silver.items():
-        clave = _clave_candidata(df)
-        if clave and not tiene(nombre, "unico", clave):
+        clave = _clave_candidata(df, (cfg_silver.get(nombre) or {}).get("deduplicar"))
+        # Una regla `unico` se declara sobre UNA columna. Si la clave de la
+        # tabla es compuesta («fecha + estado»), no hay columna que nombrar:
+        # la unicidad del conjunto ya la cubre `deduplicar` en silver.
+        if clave and " + " not in clave and not tiene(nombre, "unico", clave):
             out.append({"area": "calidad", "codigo": "regla_unico", "severidad": "alta", "aplicable": True,
                         "titulo": f"{nombre}: declarar {clave} como clave única",
                         "detalle": "Hoy es única de hecho; sin regla, un duplicado del origen entra a gold sin que nadie lo vea.",

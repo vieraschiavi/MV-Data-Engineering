@@ -37,8 +37,57 @@ def descripcion_tecnica(tabla: str, col: str) -> str:
 _PII = re.compile(r"(dni|cuit|cuil|cpf|ssn|documento|email|mail|telefono|tel[eé]fono|phone|celular|direccion|address|nombre|apellido|name|surname|tarjeta|card)", re.I)
 
 
+def _heredadas(spec: dict, columnas_de: dict[str, list[str]] | None = None) -> dict[str, str]:
+    """Descripciones que el motor puede deducir del propio YAML, sin que nadie
+    las escriba dos veces.
+
+    Tres fuentes, todas verdaderas por construcción:
+
+    1. **Derivadas**: una columna creada con `derivar` se describe con su
+       fórmula. `pct_cobrado = total_cobrado / acumulado * 100` es la
+       descripción exacta de esa columna, no una aproximación.
+    2. **Herencia silver → gold**: una medida o un atributo que viaja de silver
+       a un hecho o una dimensión es LA MISMA columna; si la de origen está
+       documentada, la de destino también lo está.
+    3. **Renombres**: si el YAML renombró la columna, la descripción viaja con
+       el nombre nuevo.
+
+    Lo que NO se deduce queda sin descripción a propósito: inventar una glosa
+    genérica («columna monto») sube el porcentaje y no le sirve a nadie."""
+    gob = (spec.get("gobernanza") or {}).get("descripciones") or {}
+    fuera: dict[str, str] = {}
+    silver_cfg = spec.get("silver") or {}
+    for tabla, cfg in silver_cfg.items():
+        for col, expr in ((cfg or {}).get("derivar") or {}).items():
+            fuera[f"{tabla}.{col}"] = f"Derivada en silver: `{expr}`"
+        for nuevo_n, viejo_n in ((cfg or {}).get("renombrar") or {}).items():
+            d = gob.get(f"{tabla}.{viejo_n}") or gob.get(viejo_n)
+            if d:
+                fuera[f"{tabla}.{nuevo_n}"] = d
+
+    def _de_origen(origen: str, col: str) -> str:
+        return (gob.get(f"{origen}.{col}") or gob.get(col)
+                or fuera.get(f"{origen}.{col}") or "")
+
+    modelo = spec.get("modelo") or {}
+    origen_de = {t["nombre"]: t.get("desde", "")
+                 for t in [*(modelo.get("dimensiones") or []), *(modelo.get("hechos") or [])]}
+    for destino, origen in origen_de.items():
+        # Todas las columnas del destino, no sólo las declaradas: una derivada
+        # viaja a gold sin figurar en `medidas` ni `atributos`, y describirla
+        # sólo cuando aparece en el YAML dejaba justo esas afuera.
+        for col in (columnas_de or {}).get(destino, []):
+            if f"{destino}.{col}" not in fuera and (txt := _de_origen(origen, col)):
+                fuera[f"{destino}.{col}"] = txt
+    return fuera
+
+
 def catalogo(capas: dict[str, dict[str, pd.DataFrame]], spec: dict) -> pd.DataFrame:
-    descripciones = (spec.get("gobernanza") or {}).get("descripciones") or {}
+    columnas_de = {t: list(df.columns) for tablas in capas.values() for t, df in tablas.items()}
+    descripciones = dict(_heredadas(spec, columnas_de))
+    # Lo escrito a mano en el YAML gana sobre lo deducido: si alguien se tomó
+    # el trabajo de explicar la columna, esa es la buena.
+    descripciones.update((spec.get("gobernanza") or {}).get("descripciones") or {})
     pii_declaradas = set((spec.get("gobernanza") or {}).get("pii") or [])
     filas = []
     for capa, tablas in capas.items():
