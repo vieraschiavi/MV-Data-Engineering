@@ -22,4 +22,13 @@ toolbarMode = "minimal"
 
 [server]
 headless = true
+# Escuchar SOLO en la máquina local. Sin esta línea Streamlit se ata a
+# 0.0.0.0: la app queda accesible desde toda la red local y la consola imprime
+# una "External URL" con la IP pública del que la corre. Para un programa de
+# escritorio eso no es una función, es una fuga.
+#
+# El despliegue en servidor NO se ve afectado: el Dockerfile pasa
+# `--server.address=0.0.0.0` en el CMD, y la línea de comandos le gana al
+# archivo de configuración. El default es el seguro; abrirse es explícito.
+address = "127.0.0.1"
 maxUploadSize = 2000

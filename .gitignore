@@ -23,3 +23,9 @@ datos/*
 landing/video/*.mp4
 assets/video/*.mp4
 assets/video/audio/
+
+# Artefactos de la construcción del instalador de Windows
+# (packaging/preparar_runtime.ps1 y el .iss). Pesan cientos de MB: son el
+# runtime embebido con todas las dependencias adentro, más el .exe compilado.
+dist_app/
+dist_instalador/
