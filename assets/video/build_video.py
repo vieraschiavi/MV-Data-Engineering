@@ -32,11 +32,19 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import imageio.v2 as imageio
-import imageio_ffmpeg
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+
+# Pillow, imageio e imageio-ffmpeg se importan DENTRO de las funciones que
+# renderizan, no acá. No son dependencias del producto — no están en
+# `requirements.txt`, son herramientas de producción de material —, y el
+# módulo tiene que poder importarse sin ellas: `tests/test_video.py` lee
+# ESCENAS, IMG y SUFIJO para verificar que ninguna escena apunte a una captura
+# que no existe, y ese test corre en el CI, que instala sólo `requirements.txt`.
+# Con los import arriba ese test se cae por ImportError sin haber mirado nada.
+if TYPE_CHECKING:                # sólo para la anotación de _placa
+    from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from narracion import CLAVES, GUION, IDIOMAS  # noqa: E402
@@ -87,6 +95,8 @@ SUFIJO = {"es": {"1_pipeline": "1_pipeline", "2_salud": "2_salud", "3_cargas": "
 
 
 def _fuente(tam: int, negrita: bool = False):
+    from PIL import ImageFont
+
     for ruta in (f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if negrita else ''}.ttf",
                  f"/usr/share/fonts/TTF/DejaVuSans{'-Bold' if negrita else ''}.ttf"):
         if Path(ruta).exists():
@@ -110,7 +120,9 @@ def _duracion_mp3(p: Path) -> float | None:
         return None
 
 
-def _placa(titulo: str, captura: Path | None, idioma: str) -> Image.Image:
+def _placa(titulo: str, captura: Path | None, idioma: str) -> "Image.Image":
+    from PIL import Image, ImageDraw
+
     im = Image.new("RGB", (W, H), TINTA)
     d = ImageDraw.Draw(im)
     # Marca arriba a la izquierda, siempre en el mismo lugar.
@@ -133,6 +145,8 @@ def _placa(titulo: str, captura: Path | None, idioma: str) -> Image.Image:
 
 
 def construir(idioma: str, cual: str) -> Path:
+    import imageio.v2 as imageio
+
     escenas, cuadros, mudas = ESCENAS[cual], [], 0
     audios: list[Path] = []
     for clave, titulos, cap in escenas:
@@ -166,6 +180,8 @@ def construir(idioma: str, cual: str) -> Path:
 
 def _pegar_audio(video: Path, audios: list[Path]) -> Path:
     """Concatena las locuciones y las monta sobre el video ya armado."""
+    import imageio_ffmpeg
+
     ff = imageio_ffmpeg.get_ffmpeg_exe()
     lista = video.with_suffix(".txt")
     lista.write_text("".join(f"file '{a.resolve()}'\n" for a in audios), encoding="utf-8")
