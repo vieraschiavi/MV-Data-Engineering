@@ -23,8 +23,26 @@ import pandas as pd
 LEJANO = pd.Timestamp("9999-12-31")
 
 
+# Marca para "este atributo no tiene dato". No se usa "" ni "nan": el primero
+# confundiría un vacío real con un faltante, y el segundo es un valor legítimo
+# de texto. El \x00 no puede venir de un CSV.
+_SIN_DATO = "\x00"
+
+
 def _hash_attrs(df: pd.DataFrame, cols: list[str]) -> pd.Series:
-    return df[cols].astype(str).agg("|".join, axis=1).map(lambda s: hashlib.md5(s.encode()).hexdigest())
+    """Huella de los atributos, para detectar cambios en SCD2.
+
+    Los faltantes se resuelven UNO POR UNO y no con `astype(str)` sobre el
+    bloque: en una columna de tipo object, `astype(str)` deja el NaN como float
+    en vez de convertirlo a texto, y el `"|".join` de la línea siguiente muere
+    con «sequence item 0: expected str instance, float found». Eso tumbaba la
+    etapa gold entera —y con el gate, todas las siguientes— por UN atributo sin
+    cargar en UNA fila del maestro. Un dato faltante es exactamente lo que un
+    maestro de clientes real tiene; que voltee el pipeline no es aceptable, y
+    el mensaje no nombraba ni la columna ni la fila.
+    """
+    texto = df[cols].apply(lambda col: col.map(lambda v: _SIN_DATO if pd.isna(v) else str(v)))
+    return texto.agg("|".join, axis=1).map(lambda s: hashlib.md5(s.encode()).hexdigest())
 
 
 def dimension(df: pd.DataFrame, cfg: dict, existente: pd.DataFrame | None = None,

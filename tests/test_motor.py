@@ -48,6 +48,58 @@ def test_calidad_referencia_y_expresion():
     assert not r2.paso and "1 filas" in r2.detalle
 
 
+def test_el_minimo_de_calidad_declarado_corta_de_verdad():
+    """`minimo` se declaraba en el YAML y no lo leía NADIE.
+
+    Quien escribía `minimo: 90` creyendo que el pipeline se frenaba por debajo
+    de 90 tenía una llave muerta y ninguna advertencia — la falla silenciosa
+    que este producto existe para no tener.
+    """
+    tablas = {"t": pd.DataFrame({"x": [1, 2, -3, -4]})}
+    reglas = [{"tabla": "t", "columna": "x", "tipo": "positivo", "critico": False},
+              {"tabla": "t", "columna": "x", "tipo": "no_nulo", "critico": False}]
+
+    # Sin mínimo: pasa aunque haya hallazgos, como antes.
+    r = calidad.correr({"calidad": {"reglas": reglas}}, tablas)
+    assert r["paso"] and r["puntaje"] < 100
+
+    # Con un mínimo por encima del puntaje: corta, y lo dice por su nombre.
+    r2 = calidad.correr({"calidad": {"minimo": 99, "reglas": reglas}}, tablas)
+    assert not r2["paso"] and r2["bajo_minimo"]
+    assert any("mínimo" in m for m in r2["criticas_fallidas"])
+
+    # Con un mínimo alcanzable: pasa y no marca nada.
+    r3 = calidad.correr({"calidad": {"minimo": 10, "reglas": reglas}}, tablas)
+    assert r3["paso"] and not r3["bajo_minimo"]
+
+    # `minimo_corta: false` deja el aviso sin frenar el pipeline.
+    r4 = calidad.correr({"calidad": {"minimo": 99, "minimo_corta": False, "reglas": reglas}}, tablas)
+    assert r4["paso"] and r4["bajo_minimo"]
+
+def test_una_dimension_con_un_atributo_faltante_no_tumba_gold():
+    """Un maestro real SIEMPRE tiene algún dato sin cargar.
+
+    `_hash_attrs` hacía `astype(str)` sobre el bloque de atributos y, en una
+    columna de tipo object, eso deja el NaN como float: el `"|".join` moría con
+    «expected str instance, float found» y se llevaba puesta la etapa gold
+    entera —y con el gate, todas las siguientes— por un solo campo vacío.
+    """
+    import numpy as np
+    cfg = {"nombre": "dim_p", "clave": "id", "atributos": ["zona", "vacas"], "scd": 2}
+    df = pd.DataFrame({"id": [1, 2, 3, 4],
+                       "zona": ["San José", np.nan, "", "Florida"],   # faltante Y vacío real
+                       "vacas": [80, 90, 100, np.nan]})
+    d = gold.dimension(df, cfg, None, date(2026, 1, 1))
+    assert len(d) == 4 and d["dim_p_key"].is_unique
+
+    # El faltante y el vacío son cosas distintas: no pueden compartir huella,
+    # o SCD2 no vería el cambio de uno al otro.
+    assert d.loc[d.id == 2, "attr_hash"].iloc[0] != d.loc[d.id == 3, "attr_hash"].iloc[0]
+
+    # Y sigue siendo idempotente con faltantes: correr dos veces no abre versión.
+    d2 = gold.dimension(df, cfg, d, date(2026, 2, 1))
+    assert len(d2) == 4 and (d2["version"] == 1).all()
+
 def test_scd2_abre_version_al_cambiar_y_es_idempotente():
     cfg = {"nombre": "dim_c", "clave": "id", "atributos": ["limite"], "scd": 2}
     v1 = gold.dimension(pd.DataFrame({"id": [1, 2], "limite": [100, 200]}), cfg, None, date(2026, 1, 1))

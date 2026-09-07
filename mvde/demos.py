@@ -3,6 +3,10 @@
 
   cobranzas: una financiera — clientes, cuotas y pagos, con mora y default.
   ventas:    consumo masivo — productos, sucursales y ventas diarias.
+  conaprole: cooperativa láctea — remisión de leche por productor y mes, con
+             calidad de laboratorio, liquidación por sólidos y proyección de
+             la zafra. Pensada para mostrarle el producto a una industria
+             láctea; los datos NO son de ninguna empresa (ver `_conaprole`).
 
 `crear(nombre, carpeta)` escribe los CSV y el `proyecto.yaml` listos para
 `python -m mvde correr`. Cada demo ejercita cosas distintas del motor.
@@ -16,7 +20,7 @@ import pandas as pd
 
 from . import proyecto
 
-NOMBRES = ["cobranzas", "ventas", "kash", "cartera"]
+NOMBRES = ["cobranzas", "ventas", "kash", "cartera", "conaprole"]
 
 
 def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
@@ -498,11 +502,256 @@ def _cartera(carpeta: Path, meses: int = 36, seed: int = 42) -> dict:
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Cooperativa láctea (demo pensada para presentarle el producto a Conaprole)
+#
+# ADVERTENCIA QUE NO SE SACA: los datos son 100 % SINTÉTICOS, generados acá con
+# semilla fija. NO provienen de Conaprole ni de ninguna otra empresa, y las
+# cifras no representan su operación. La demo sirve para mostrar QUÉ hace el
+# producto sobre el proceso de una industria láctea, no para decir nada sobre
+# el negocio de nadie. Si en una reunión alguien pregunta "¿de dónde salieron
+# estos números?", la respuesta es "los generamos nosotros para la demo".
+#
+# Por qué la REMISIÓN y no otra cosa: es el proceso que cruza todas las áreas
+# que un relevamiento tiene que entrevistar —productores, laboratorio de
+# calidad, logística de recolección, plantas y comercial— así que una sola
+# demo toca a todos los interlocutores. Y tiene las tres cosas que el motor
+# muestra bien: calidad de dato con reglas de negocio reales (un recuento de
+# células somáticas imposible no es un outlier, es un dato mal cargado),
+# estacionalidad fuerte y liquidación con fórmula.
+#
+# Estacionalidad del hemisferio sur: pico de producción en primavera
+# (octubre-diciembre, cuando la pastura rinde) y piso en invierno
+# (junio-julio). Es al revés que las demos del hemisferio norte, y es lo que
+# hace que una proyección "de manual" falle si no la modela.
+SECCIONALES = [
+    # (seccional, productores, litros/día por tambo, tendencia anual, sesgo de calidad)
+    ("San José",      110, 2_950, -0.012,  0.00),
+    ("Florida",        86, 3_400, -0.008,  0.03),
+    ("Colonia",        74, 3_150, -0.015, -0.02),
+    ("Canelones",      68, 2_100, -0.028, -0.05),   # tambos chicos, más presión
+    ("Soriano",        42, 4_200,  0.006,  0.04),
+    ("Durazno",        26, 2_600, -0.010,  0.01),
+]
+TIPOS_TAMBO = ["Familiar", "Empresarial", "Mixto"]
+
+
+def _conaprole(carpeta: Path, meses: int = 36, seed: int = 42) -> dict:
+    rng = np.random.default_rng(seed)
+    periodos = pd.date_range("2023-01-01", periods=meses, freq="MS")
+
+    # --- Padrón de productores ------------------------------------------
+    prods = []
+    pid = 1000
+    for seccional, cantidad, litros_dia, tend, sesgo in SECCIONALES:
+        for _ in range(cantidad):
+            pid += 1
+            tipo = rng.choice(TIPOS_TAMBO, p=[0.55, 0.20, 0.25])
+            escala = {"Familiar": 0.55, "Mixto": 1.0, "Empresarial": 2.3}[tipo]
+            vacas = int(max(18, rng.normal(litros_dia * escala / 19, 14)))
+            prods.append((pid, seccional, tipo, vacas,
+                          int(vacas * rng.uniform(1.1, 2.4)),          # hectáreas
+                          int(rng.integers(1968, 2021))))              # año de ingreso
+    productores = pd.DataFrame(prods, columns=["id_productor", "seccional", "tipo_tambo",
+                                               "vacas_masa", "hectareas", "anio_ingreso"])
+    # Defecto a propósito: seis productores sin seccional cargada. Es el caso
+    # real de un alta hecha a mano que nunca se completó, y hace que toda la
+    # zona quede mal atribuida en el tablero sin que nadie lo note.
+    productores.loc[productores.sample(6, random_state=seed).index, "seccional"] = ""
+
+    # --- Remisión mensual por productor ---------------------------------
+    filas = []
+    litros_base = dict((s[0], s[2]) for s in SECCIONALES)
+    tend_sec = dict((s[0], s[3]) for s in SECCIONALES)
+    sesgo_sec = dict((s[0], s[4]) for s in SECCIONALES)
+    for _, pr in productores.iterrows():
+        sec = pr["seccional"] or "San José"
+        escala = {"Familiar": 0.55, "Mixto": 1.0, "Empresarial": 2.3}[pr["tipo_tambo"]]
+        base_mes = litros_base[sec] * escala * 30 / 1000.0                  # miles de litros/mes
+        propio = rng.normal(1.0, 0.13)
+        for k, f in enumerate(periodos):
+            # Zafra: pico en primavera (mes 11), piso en invierno (mes 6).
+            zafra = 1 + 0.22 * np.sin(2 * np.pi * (f.month - 8) / 12)
+            deriva = (1 + tend_sec[sec]) ** (k / 12)
+            litros = base_mes * propio * zafra * deriva * (1 + rng.normal(0, 0.05))
+            if litros <= 0:
+                continue
+            # Sólidos: la grasa sube en invierno (menos volumen, más concentrado).
+            grasa = np.clip(rng.normal(3.72 - 0.28 * (zafra - 1) * 4, 0.16), 2.8, 5.2)
+            proteina = np.clip(rng.normal(3.28 - 0.14 * (zafra - 1) * 4, 0.11), 2.6, 4.2)
+            # Calidad: RCS (células somáticas, miles/ml) y UFC (bacteriología).
+            # Empeoran en verano por calor y en tambos chicos.
+            calor = 1 + 0.18 * np.sin(2 * np.pi * (f.month - 11) / 12)
+            rcs = np.clip(rng.lognormal(np.log(255 * calor * (1 - sesgo_sec[sec])), 0.34), 60, 1_900)
+            ufc = np.clip(rng.lognormal(np.log(28 * calor), 0.62), 3, 900)
+            temp = np.clip(rng.normal(3.6, 0.7), 1.0, 8.5)
+            filas.append((f.date().isoformat(), int(pr["id_productor"]), round(litros, 1),
+                          round(grasa, 2), round(proteina, 2), round(rcs, 0), round(ufc, 0), round(temp, 1)))
+    rem = pd.DataFrame(filas, columns=["mes", "id_productor", "miles_litros", "grasa_pct",
+                                       "proteina_pct", "rcs_miles_ml", "ufc_miles_ml", "temp_recibo_c"])
+
+    # Defectos inyectados a propósito, los tres que aparecen de verdad en una
+    # cadena de laboratorio + recolección:
+    #   1. un lote de recuentos imposibles (coma corrida en la carga),
+    #   2. temperaturas fuera de la cadena de frío,
+    #   3. un mes cargado dos veces.
+    idx = rem.sample(40, random_state=seed).index
+    rem.loc[idx, "rcs_miles_ml"] = rem.loc[idx, "rcs_miles_ml"] * 10
+    idx2 = rem.sample(25, random_state=seed + 1).index
+    rem.loc[idx2, "temp_recibo_c"] = np.round(rng.uniform(9.0, 14.0, size=len(idx2)), 1)
+    dup = rem[rem["mes"] == periodos[18].date().isoformat()]
+    rem = pd.concat([rem, dup], ignore_index=True)
+
+    productores.to_csv(carpeta / "productores.csv", index=False)
+    rem.to_csv(carpeta / "remision_mensual.csv", index=False, sep=";", decimal=",")
+
+    return {
+        "nombre": "Conaprole · demo",
+        "descripcion": (
+            "DEMO CON DATOS 100 % SINTÉTICOS — no provienen de Conaprole ni de ninguna empresa. "
+            "Remisión de leche de una cooperativa láctea: 406 productores en 6 seccionales, 36 meses, "
+            "calidad de laboratorio (células somáticas, bacteriología, cadena de frío), liquidación por "
+            "kilos de sólidos con bonificación por calidad, y proyección de la zafra a 3 meses con "
+            "backtest de origen móvil y banda de desvío por seccional."),
+        "idioma": "es",
+        "fuentes": [
+            {"nombre": "productores", "tipo": "csv", "ruta": "productores.csv"},
+            {"nombre": "remision", "tipo": "csv", "ruta": "remision_mensual.csv",
+             "opciones": {"sep": ";", "decimal": ","}},
+        ],
+        "silver": {
+            "productores": {"tipos": "auto", "deduplicar": ["id_productor"],
+                            "derivar": {
+                                # La escala del tambo es la variable que más se
+                                # usa para segmentar en una cooperativa: define
+                                # con quién se habla y qué se le puede ofrecer.
+                                "escala_tambo": "np.where(df['vacas_masa'] < 60, 'Chico (<60)', "
+                                                "np.where(df['vacas_masa'] < 150, 'Mediano (60-150)', 'Grande (150+)'))",
+                                "antiguedad_anios": "2026 - df['anio_ingreso']"}},
+            "remision": {"tipos": "auto", "fechas": ["mes"],
+                         # El mismo productor no puede tener dos remisiones del
+                         # mismo mes: si aparecen, es recarga del archivo.
+                         "deduplicar": ["mes", "id_productor"],
+                         "derivar": {
+                             "kg_solidos": "df['miles_litros'] * 1000 * (df['grasa_pct'] + df['proteina_pct']) / 100",
+                             # Bandas de bonificación por calidad. Es la regla
+                             # que hay que confirmar con el cliente en el
+                             # relevamiento: acá va una versión de ejemplo.
+                             "categoria_calidad": "np.where((df['rcs_miles_ml'] <= 200) & (df['ufc_miles_ml'] <= 30), 'A', "
+                                                  "np.where((df['rcs_miles_ml'] <= 400) & (df['ufc_miles_ml'] <= 80), 'B', "
+                                                  "np.where(df['rcs_miles_ml'] <= 700, 'C', 'Fuera de banda')))",
+                             "bonificacion_pct": "np.select("
+                                                 "[df['rcs_miles_ml'] <= 200, df['rcs_miles_ml'] <= 400, df['rcs_miles_ml'] <= 700], "
+                                                 "[6.0, 2.5, 0.0], default=-4.0)",
+                             "fuera_cadena_frio": "df['temp_recibo_c'] > 6.0"}},
+        },
+        # `minimo: 70` y no 80: la demo TIENE defectos inyectados a propósito y
+        # saca 75. Con 80 el gate corta en la etapa 4 y no se llega a mostrar
+        # el modelo, la proyección ni el .pbit. Subirlo a 80 en vivo, correr de
+        # nuevo y ver el pipeline frenarse es, de hecho, la mejor forma de
+        # explicar para qué sirve el gate: la regla es tuya, el corte es real.
+        "calidad": {"minimo": 70, "criticos_cortan": True, "reglas": [
+            {"tabla": "productores", "columna": "id_productor", "tipo": "unico", "critico": True},
+            {"tabla": "productores", "columna": "seccional", "tipo": "no_nulo", "critico": False},
+            {"tabla": "productores", "columna": "vacas_masa", "tipo": "positivo", "critico": True},
+            {"tabla": "remision", "columna": "id_productor", "tipo": "referencia", "a": "productores.id_productor", "critico": True},
+            {"tabla": "remision", "columna": "miles_litros", "tipo": "positivo", "critico": True},
+            # Un recuento de células somáticas por encima de 1.500 mil/ml no es
+            # un tambo con problemas: es un dato mal cargado. El límite legal de
+            # aptitud está muy por debajo, y una vaca que lo supere de verdad no
+            # está en producción.
+            {"tabla": "remision", "columna": "rcs_miles_ml", "tipo": "rango", "min": 20, "max": 1500, "critico": False},
+            {"tabla": "remision", "columna": "grasa_pct", "tipo": "rango", "min": 2.5, "max": 6.0, "critico": True},
+            {"tabla": "remision", "columna": "proteina_pct", "tipo": "rango", "min": 2.4, "max": 4.5, "critico": True},
+            # Cadena de frío: la leche se recibe entre 2 y 6 °C.
+            {"tabla": "remision", "columna": "temp_recibo_c", "tipo": "rango", "min": 1.0, "max": 6.0, "critico": False},
+            {"tabla": "remision", "columna": "categoria_calidad", "tipo": "valores",
+             "valores": ["A", "B", "C", "Fuera de banda"], "critico": False},
+        ]},
+        "modelo": {
+            "dimensiones": [{"nombre": "dim_productor", "desde": "productores", "clave": "id_productor",
+                             "atributos": ["seccional", "tipo_tambo", "escala_tambo", "vacas_masa",
+                                           "hectareas", "antiguedad_anios"], "scd": 2}],
+            "hechos": [{"nombre": "fact_remision", "desde": "remision", "fecha": "mes",
+                        "claves": {"id_productor": "dim_productor"},
+                        "medidas": ["miles_litros", "kg_solidos", "bonificacion_pct",
+                                    "rcs_miles_ml", "ufc_miles_ml"]}],
+            "calendario": "auto",
+        },
+        "vistas": {
+            "v_remision_mes_seccional":
+                "SELECT c.anio_mes, d.seccional, SUM(f.miles_litros) miles_litros, "
+                "SUM(f.kg_solidos) kg_solidos, COUNT(DISTINCT f.dim_productor_key) productores "
+                "FROM gold.fact_remision f JOIN gold.dim_calendario c USING (fecha_key) "
+                "JOIN gold.dim_productor d USING (dim_productor_key) GROUP BY 1,2 ORDER BY 1,2",
+            "v_calidad_por_escala":
+                "SELECT d.escala_tambo, ROUND(AVG(f.rcs_miles_ml),0) rcs_prom, "
+                "ROUND(AVG(f.ufc_miles_ml),0) ufc_prom, ROUND(AVG(f.bonificacion_pct),2) bonif_prom_pct, "
+                "COUNT(DISTINCT d.dim_productor_key) productores "
+                "FROM gold.fact_remision f JOIN gold.dim_productor d USING (dim_productor_key) "
+                "WHERE d.is_current GROUP BY 1 ORDER BY 4 DESC",
+        },
+        "kpis": [
+            {"nombre": "Miles de litros remitidos", "tabla": "fact_remision", "columna": "miles_litros", "agregacion": "sum", "formato": "#,0"},
+            {"nombre": "Kilos de sólidos", "tabla": "fact_remision", "columna": "kg_solidos", "agregacion": "sum", "formato": "#,0"},
+            {"nombre": "Productores activos", "tabla": "fact_remision", "columna": "dim_productor_key", "agregacion": "count_distinct", "formato": "#,0"},
+            {"nombre": "RCS promedio (miles/ml)", "tabla": "fact_remision", "columna": "rcs_miles_ml", "agregacion": "avg", "formato": "#,0"},
+            {"nombre": "Bonificación promedio %", "tabla": "fact_remision", "columna": "bonificacion_pct", "agregacion": "avg", "formato": "0.0"},
+            # Sobre gold, no sobre silver: el almacén sólo publica gold, y una
+            # consulta a `silver.remision` deja el KPI en «—». La banda A se
+            # recalcula acá con los umbrales, porque la categoría es texto y no
+            # viaja como medida del hecho.
+            {"nombre": "Remisión en categoría A %", "tipo": "sql",
+             "sql": "SELECT AVG(CASE WHEN rcs_miles_ml <= 200 AND ufc_miles_ml <= 30 THEN 1.0 ELSE 0.0 END) "
+                    "FROM gold.fact_remision", "formato": "0.0%"},
+        ],
+        "gobernanza": {
+            "dueno": "Analista de Negocio / Datos · proyecto Conaprole",
+            "descripciones": {
+                "id_productor": "Número de productor remitente en el padrón de la cooperativa",
+                "seccional": "Seccional de recolección a la que pertenece el tambo",
+                "tipo_tambo": "Forma de explotación declarada: Familiar, Empresarial o Mixto",
+                "vacas_masa": "Vacas en ordeñe (masa) declaradas por el productor",
+                "hectareas": "Superficie afectada al tambo",
+                "anio_ingreso": "Año de ingreso del productor a la cooperativa",
+                "escala_tambo": "Segmento por tamaño de rodeo, derivado de vacas_masa",
+                "antiguedad_anios": "Años desde el ingreso a la cooperativa",
+                "mes": "Mes de remisión (primer día del mes)",
+                "miles_litros": "Litros remitidos en el mes, en miles",
+                "grasa_pct": "Materia grasa, % sobre volumen (promedio ponderado del mes)",
+                "proteina_pct": "Proteína, % sobre volumen (promedio ponderado del mes)",
+                "rcs_miles_ml": "Recuento de células somáticas, en miles por ml. Indicador de sanidad de ubre",
+                "ufc_miles_ml": "Unidades formadoras de colonia, en miles por ml. Indicador de higiene de ordeñe",
+                "temp_recibo_c": "Temperatura de la leche al recibo, en °C. La cadena de frío es 2 a 6 °C",
+                "kg_solidos": "Kilos de sólidos útiles (grasa + proteína): la base real de la liquidación",
+                "categoria_calidad": "Banda de calidad A/B/C según células somáticas y bacteriología",
+                "bonificacion_pct": "Bonificación (o castigo) sobre el precio, en %, según la banda de calidad",
+                "fuera_cadena_frio": "Verdadero si la leche se recibió por encima de 6 °C"}},
+        # Proyección de la zafra: tres meses por seccional, más el total.
+        # Cada seccional elige su modelo por backtest y se reporta contra la
+        # estacional ingenua — con esta estacionalidad, un modelo que no la
+        # capture pierde contra repetir el año anterior, y eso hay que poder
+        # mostrarlo en pantalla.
+        "ml": {"tipo": "serie",
+               "sql": "SELECT f.fecha_key, d.seccional, f.miles_litros "
+                      "FROM gold.fact_remision f JOIN gold.dim_productor d USING (dim_productor_key)",
+               "fecha": "fecha_key", "valor": "miles_litros",
+               "frecuencia": "mensual", "horizonte": 3, "origenes": 6, "banda": 0.8,
+               "segmento": ["seccional"], "minimo_periodos": 24},
+        "frescura": {"cada": "mensual"},
+        "reporte": {"titulo": "Conaprole · remisión, calidad y proyección de zafra", "graficos": "auto"},
+        "powerbi": {"generar": True, "nombre": "Conaprole"},
+        "automatizacion": {"hora": "06:00", "reintentos": 3},
+    }
+
+
 def crear(nombre: str, carpeta: Path) -> Path:
     if nombre not in NOMBRES:
         raise ValueError(f"demo desconocida; válidas: {NOMBRES}")
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
-    spec = {"cobranzas": _cobranzas, "ventas": _ventas, "kash": _kash, "cartera": _cartera}[nombre](carpeta)
+    spec = {"cobranzas": _cobranzas, "ventas": _ventas, "kash": _kash, "cartera": _cartera,
+        "conaprole": _conaprole}[nombre](carpeta)
     spec = proyecto.normalizar(spec)
     return proyecto.guardar(spec, carpeta / "proyecto.yaml")

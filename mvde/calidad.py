@@ -121,12 +121,40 @@ def correr(spec: dict, tablas: dict[str, pd.DataFrame]) -> dict:
         por_dim[d] = {"reglas": len(rs), "ok": sum(x.paso for x in rs),
                       "puntaje": round(100 * sum(x.paso for x in rs) / len(rs), 1) if rs else None}
     criticos_fallidos = [x for x in resultados if x.critico and not x.paso]
+    cfg = spec.get("calidad", {}) or {}
+    puntaje = round(100 * sum(x.paso for x in resultados) / len(resultados), 1) if resultados else 100.0
+
+    # Umbral de puntaje. `minimo` se declaraba en el YAML —la demo `cartera` ya
+    # lo traía— y NADIE lo leía: quien escribía `minimo: 90` creyendo que el
+    # pipeline se frenaba por debajo de 90 tenía una llave muerta y ninguna
+    # advertencia. Es la falla silenciosa que este producto existe para no
+    # tener: una declaración que parece un control y no controla nada.
+    #
+    # Corta como una regla crítica, porque es lo que quiere decir: por debajo
+    # de este puntaje los datos no se publican. Se puede declarar
+    # `minimo_corta: false` para que sólo quede el aviso.
+    minimo = cfg.get("minimo")
+    bajo_minimo = minimo is not None and puntaje < float(minimo)
+    corta_por_minimo = bajo_minimo and cfg.get("minimo_corta", True)
+
+    paso = True
+    if cfg.get("criticos_cortan", True) and criticos_fallidos:
+        paso = False
+    if corta_por_minimo:
+        paso = False
+
+    criticas = [x.regla for x in criticos_fallidos]
+    if corta_por_minimo:
+        criticas.append(f"puntaje {puntaje} por debajo del mínimo declarado ({minimo})")
+
     return {
-        "paso": not criticos_fallidos if spec.get("calidad", {}).get("criticos_cortan", True) else True,
-        "puntaje": round(100 * sum(x.paso for x in resultados) / len(resultados), 1) if resultados else 100.0,
+        "paso": paso,
+        "puntaje": puntaje,
+        "minimo": minimo,
+        "bajo_minimo": bajo_minimo,
         "reglas": len(resultados),
         "fallidas": [asdict(x) for x in resultados if not x.paso],
-        "criticas_fallidas": [x.regla for x in criticos_fallidos],
+        "criticas_fallidas": criticas,
         "por_dimension": por_dim,
         "resultados": [asdict(x) for x in resultados],
     }

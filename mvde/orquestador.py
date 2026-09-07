@@ -200,10 +200,21 @@ class Pipeline:
         reporte.guardar_json(p, self.calidad)
         ev = {"puntaje": self.calidad["puntaje"], "reglas": self.calidad["reglas"],
               "por_dimension": self.calidad["por_dimension"], "fallidas": self.calidad["fallidas"]}
+        ev["minimo"] = self.calidad.get("minimo")
+        ev["bajo_minimo"] = self.calidad.get("bajo_minimo", False)
         if not self.calidad["paso"]:
-            return Resultado("calidad", False, error="reglas críticas fallidas: " + ", ".join(self.calidad["criticas_fallidas"]),
-                             evidencia=ev, artefactos=[str(p)])
-        return Resultado("calidad", True, f"puntaje {self.calidad['puntaje']} · {self.calidad['reglas']} reglas · {len(self.calidad['fallidas'])} hallazgos no críticos", ev, [str(p)])
+            # El motivo se nombra por lo que es: puede cortar una regla crítica,
+            # el puntaje por debajo del mínimo declarado, o las dos cosas. Decir
+            # «reglas críticas fallidas» cuando lo que falló fue el umbral manda
+            # a buscar el problema al lugar equivocado.
+            motivo = "no pasó el control de calidad: " + "; ".join(self.calidad["criticas_fallidas"])
+            return Resultado("calidad", False, error=motivo, evidencia=ev, artefactos=[str(p)])
+        aviso = ""
+        if self.calidad.get("bajo_minimo"):
+            aviso = f" · ⚠ por debajo del mínimo declarado ({self.calidad['minimo']})"
+        return Resultado("calidad", True,
+                         f"puntaje {self.calidad['puntaje']} · {self.calidad['reglas']} reglas · "
+                         f"{len(self.calidad['fallidas'])} hallazgos no críticos{aviso}", ev, [str(p)])
 
     def _gold(self) -> Resultado:
         if not self.silver:
