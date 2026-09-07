@@ -50,12 +50,18 @@ SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=mvde.ico
 UninstallDisplayIcon={app}\packaging\mvde.ico
-; `x64` y no `x64compatible`: el segundo existe recién desde Inno Setup 6.3 y
-; en 6.2 el compilador CORTA con error. `x64` lo aceptan las dos (en 6.3+ está
-; deprecado pero sigue funcionando), así que el instalador se construye tanto
-; en el runner de GitHub como en una máquina con una versión más vieja.
+; `x64compatible` existe recién desde Inno Setup 6.3: en 6.2 el compilador
+; CORTA con error. Pero `x64` a secas, en 6.3+, se sustituye por `x64os`, que
+; NO deja instalar en Windows ARM64 por emulación — y las laptops ARM ya se
+; venden. Se elige según la versión del compilador y quedan las dos cosas: se
+; construye con 6.2 y, con 6.3+, instala también en ARM64.
+#if VER >= EncodeVer(6,3,0)
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+#else
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
+#endif
 ; El runtime embebido pesa; sin esto Inno estima de menos y Windows avisa mal
 ; sobre el espacio libre.
 ExtraDiskSpaceRequired=520000000
