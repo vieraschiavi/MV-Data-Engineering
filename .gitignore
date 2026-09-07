@@ -17,5 +17,9 @@ datos/*
 !datos/.gitkeep
 .env
 
-# Videos: pesan y se generan; los publicados van aparte (ver landing/README.md).
+# Videos: pesan y se generan con assets/video/build_video.py. Se ignoran en los
+# DOS lugares — se montan en assets/video/ y se copian a landing/video/ —, que
+# es lo que este .gitignore no cubría y dejó seis MP4 entrando al repo.
 landing/video/*.mp4
+assets/video/*.mp4
+assets/video/audio/
