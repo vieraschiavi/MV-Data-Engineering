@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from . import confidencial
+
 _LOCAL = {
     "claude": {"nombre": "Claude (Anthropic)", "env": "ANTHROPIC_API_KEY", "modelos": [("claude-sonnet-5", "Sonnet 5")]},
     "openai": {"nombre": "ChatGPT (OpenAI)", "env": "OPENAI_API_KEY", "modelos": [("gpt-5-mini", "GPT-5 mini")]},
@@ -39,6 +41,16 @@ def _dxl():
 
 
 def disponible() -> bool:
+    """Si se puede consultar a un proveedor de IA.
+
+    En modo confidencial devuelve False aunque el transporte esté instalado y
+    haya clave. No es un rechazo: `preguntar()` mira esta función y cae solo al
+    modo LOCAL, que responde con los KPIs, la calidad y el catálogo de la
+    corrida sin que un solo dato del cliente salga de la máquina. La función
+    sigue sirviendo; lo que deja de existir es el viaje.
+    """
+    if confidencial.activo():
+        return False
     try:
         _dxl()
         return True
@@ -75,6 +87,9 @@ _ENDPOINTS_MODELOS = {
 
 
 def listar_modelos(proveedor: str, api_key: str | None = None, endpoint: str = "") -> list[str]:
+    # Acá no alcanza con degradar: este pedido viaja CON la clave y le confirma
+    # al proveedor que existe un despliegue usándola. Se corta de plano.
+    confidencial.exigir_local("consultar la lista de modelos de un proveedor de IA", proveedor)
     """Modelos disponibles HOY según la API del proveedor (la lista estática del
     producto envejece; ésta no). Lanza RuntimeError con el motivo si no se puede."""
     url = _ENDPOINTS_MODELOS.get(proveedor)

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from . import confidencial
+
 _ESCRITURA = re.compile(r"^\s*(insert|update|delete|drop|alter|create|truncate|merge|exec|grant)\b", re.I)
 _NUBE = ("s3://", "gs://", "gcs://", "az://", "abfs://", "abfss://", "adl://")
 
@@ -32,6 +34,11 @@ def _ruta(fuente: dict, base: str) -> str:
     if not ruta:
         raise FuenteError(f"fuente «{fuente['nombre']}» sin `ruta`")
     if ruta.startswith(_NUBE) or ruta.startswith(("http://", "https://")):
+        # Único punto por donde pasan TODAS las rutas del YAML, así que acá se
+        # atrapa también el caso que se escapa de `_leer_url`: una fuente
+        # declarada `tipo: csv` cuya `ruta` es un http:// o un s3://.
+        que = "leer una ruta de nube" if confidencial.es_ruta_de_nube(ruta) else "leer una ruta remota"
+        confidencial.exigir_local(que, ruta)
         return ruta
     p = Path(ruta)
     return str(p if p.is_absolute() else Path(base) / p)
@@ -101,6 +108,9 @@ def _leer_duckdb(ruta: str, fuente: dict) -> pd.DataFrame:
 
 def _leer_url(fuente: dict) -> pd.DataFrame:
     url = fuente["ruta"]
+    # Una fuente `url` sale de la red del cliente por definición: es el primer
+    # lugar donde un YAML copiado de otro proyecto filtra sin que nadie lo note.
+    confidencial.exigir_local("leer una fuente por URL", url)
     formato = fuente.get("formato", "csv")
     with urllib.request.urlopen(url, timeout=60) as r:  # noqa: S310 - URL declarada por el usuario
         datos = r.read()
@@ -134,6 +144,9 @@ def _leer_kaggle(fuente: dict, base: str) -> pd.DataFrame:
     destino = Path(base) / str(fuente.get("destino", "data/raw"))
     archivo = destino / fuente["archivo"]
     if not archivo.exists():
+        # Sólo se bloquea la DESCARGA. Si el archivo ya está en el disco de la
+        # VM, leerlo no cruza ningún borde y el modo no tiene por qué impedirlo.
+        confidencial.exigir_local("descargar un dataset de Kaggle", str(fuente.get("dataset", "")))
         if shutil.which("kaggle") is None:
             raise FuenteError("falta el CLI de Kaggle (pip install kaggle) y el archivo no está descargado")
         destino.mkdir(parents=True, exist_ok=True)

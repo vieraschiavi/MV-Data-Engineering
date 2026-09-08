@@ -25,6 +25,8 @@ en lugar de la evidencia.
 from __future__ import annotations
 
 import json
+
+from . import confidencial
 import re
 import unicodedata
 from datetime import datetime
@@ -203,6 +205,11 @@ def transcribir(audio: bytes, nombre_archivo: str, proveedor: str, api_key: str,
         "Authorization": f"Bearer {api_key}",
         "Content-Type": f"multipart/form-data; boundary={limite}",
     })
+    # Un audio de una reunión con el cliente es dato del cliente: mandarlo a
+    # transcribir a un servicio externo es exactamente la fuga que el modo
+    # existe para impedir. El .vtt de Teams, que ya viene transcripto y no
+    # requiere red, sigue funcionando igual.
+    confidencial.exigir_local("transcribir audio en un servicio remoto", cfg.get("nombre", ""))
     try:
         with urllib.request.urlopen(pedido, timeout=600) as r:
             datos = json.loads(r.read().decode("utf-8"))

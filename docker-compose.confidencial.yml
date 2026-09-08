@@ -1,0 +1,101 @@
+# © 2026 Martín Viera. Todos los derechos reservados.
+#
+# MV Data Engineering · perfil CONFIDENCIAL, para datos de un cliente.
+#
+# Se usa ENCIMA del compose normal, no en lugar de él:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.confidencial.yml up -d
+#
+# Para qué: el caso en que los datos son del CLIENTE y no pueden salir de su
+# infraestructura — ni a la máquina del consultor, ni a un proveedor de IA, ni
+# a un bucket. El programa corre en la VM del cliente y el consultor entra por
+# navegador: en su laptop no se instala nada y no queda ningún dato.
+#
+# Tres capas, y ninguna reemplaza a las otras
+# -------------------------------------------
+#   1. La APLICACIÓN se niega     `MVDE_CONFIDENCIAL=1` (acá abajo). Viaja con
+#                                 el programa y se verifica en cada build con
+#                                 `tests/test_confidencial.py`.
+#   2. El CONTENEDOR no puede     endurecimiento de acá abajo: sin privilegios
+#      hacer de más               nuevos, sin capacidades, disco de sólo
+#                                 lectura salvo lo que necesita escribir.
+#   3. La RED no lo deja salir    regla de egreso en el firewall de la VM. NO
+#                                 está en este archivo a propósito: ver la nota
+#                                 al final.
+#
+# La primera capa es la que sobrevive a que alguien mueva la VM de red.
+services:
+  mvde:
+    environment:
+      # El interruptor. Con esto puesto, el motor CORTA —con una excepción que
+      # nombra qué se intentó y hacia dónde— en los cinco caminos por los que un
+      # dato puede cruzar el borde: fuentes por URL, rutas de nube, descarga de
+      # Kaggle, consultas a proveedores de IA y transcripción remota de audio.
+      #
+      # La IA no se rompe: cae al modo LOCAL, que responde con los KPIs, la
+      # calidad y el catálogo de la corrida sin salir de la máquina.
+      MVDE_CONFIDENCIAL: "1"
+
+      # Login OBLIGATORIO. En el compose base es opcional; acá no. Sin esto,
+      # cualquiera con acceso de red a la VM abre el tablero del cliente.
+      MVDE_USUARIOS_ARCHIVO: /run/secretos/usuarios.txt
+
+    # ── Endurecimiento del contenedor ────────────────────────────────────
+    # El contenedor no necesita ninguna capacidad de root para servir una app
+    # web: quitárselas todas no le saca nada y le cierra la puerta a un montón
+    # de cosas si alguien consigue ejecución adentro.
+    cap_drop:
+      - ALL
+    security_opt:
+      # Un proceso adentro no puede ganar privilegios que el padre no tenía,
+      # ni siquiera con un binario setuid.
+      - no-new-privileges:true
+
+    # Disco raíz de sólo lectura. Lo que de verdad se escribe va montado
+    # aparte, así que un proceso comprometido no puede dejar nada persistente
+    # en la imagen.
+    read_only: true
+    tmpfs:
+      # Streamlit y matplotlib escriben temporales; sin esto no arranca.
+      - /tmp:size=512m
+      - /home/mvde:size=64m
+
+    volumes:
+      # Los datos del cliente: el único lugar con escritura real. Queda en la
+      # VM del cliente y nunca se copia afuera.
+      - ./datos:/datos
+      - ./secretos/usuarios.txt:/run/secretos/usuarios.txt:ro
+
+    # Sólo al localhost de la VM. Lo publica el reverse proxy con HTTPS y, si
+    # corresponde, detrás de la VPN del cliente. Nunca 0.0.0.0 en este perfil.
+    ports:
+      - "127.0.0.1:8501:8501"
+
+    # Los logs no se van a un servicio externo y no crecen sin control: rotan
+    # en disco de la propia VM.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ── La tercera capa: el egreso de red ───────────────────────────────────────
+#
+# NO se declara acá una red `internal: true`, y la omisión es deliberada: eso
+# también le corta el acceso al SQL Server del cliente, que casi siempre está
+# en otra máquina de su LAN, y dejaría al programa sin poder leer los datos que
+# vino a procesar.
+#
+# La regla correcta la aplica el equipo de infraestructura del cliente sobre la
+# VM: permitir salida a los rangos internos que el proyecto necesita (bases,
+# comparticiones) y NEGAR el resto. Como referencia, con nftables:
+#
+#     # permitir la LAN del cliente
+#     nft add rule inet filter output ip daddr 10.0.0.0/8 accept
+#     # negar todo lo demás hacia afuera
+#     nft add rule inet filter output ip daddr != 10.0.0.0/8 drop
+#
+# Si esa regla no se puede aplicar, el despliegue NO queda desprotegido: la
+# capa 1 sigue en pie y es la que se verifica con tests. Lo que se pierde es la
+# defensa en profundidad, y conviene decirlo por escrito en el acta del
+# proyecto en vez de asumir que alguien lo hizo.

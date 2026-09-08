@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import ETAPAS, __version__
+from . import confidencial  # noqa: E402
 from . import almacen, bronze, calidad, dax, frescura, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyeccion, proyecto, reporte, salud, silver, transformaciones
 
 log = logging.getLogger("mvde")
@@ -410,10 +411,19 @@ class Pipeline:
     def _entrega(self) -> Resultado:
         self.dirs["entrega"].mkdir(parents=True, exist_ok=True)
         manifiesto = {"proyecto": self.spec["nombre"], "generado": datetime.now().isoformat(timespec="seconds"), "version": __version__,
+                      # Queda escrito en qué modo corrió. Una corrida sobre
+                      # datos de un cliente que no deja constancia de si podía
+                      # salir a internet no se puede auditar después: obliga a
+                      # confiar en la memoria de alguien.
+                      "confidencial": confidencial.estado(),
                       "etapas": {e: {"estado": r.estado(), "resumen": r.resumen or r.error, "segundos": r.segundos, "artefactos": r.artefactos}
                                  for e, r in self.resultados.items()}}
         p1 = reporte.guardar_json(self.dirs["entrega"] / "manifiesto.json", manifiesto)
-        lineas = [f"# {self.spec['nombre']} · entrega", "", f"Generado {manifiesto['generado']} por MV Data Engineering v{__version__}", "",
+        sello = ("\n> **Modo confidencial ACTIVO.** Esta corrida no pudo sacar datos de la red "
+                 "donde se ejecutó: fuentes por URL, rutas de nube, Kaggle, proveedores de IA y "
+                 "transcripción remota quedaron bloqueados.\n"
+                 if confidencial.activo() else "")
+        lineas = [f"# {self.spec['nombre']} · entrega", "", f"Generado {manifiesto['generado']} por MV Data Engineering v{__version__}", sello, "",
                   "| Etapa | Estado | Resumen | s |", "|---|---|---|---|"]
         for e in ETAPAS:
             r = self.resultados.get(e)
