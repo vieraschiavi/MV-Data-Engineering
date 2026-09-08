@@ -1,0 +1,125 @@
+# Gate de calidad: linter, la suite completa, y el despliegue confidencial
+# levantado de verdad. En cada push y cada PR contra main.
+#
+# Portado desde el monorepo `Power-bi`, donde este producto vivía como
+# subdirectorio. Al extraerlo a su propio repositorio los workflows quedaron
+# atrás: durante un rato el repo no tuvo NINGÚN check, y "las 12 etapas cierran"
+# era una afirmación respaldada por una corrida a mano que nadie iba a repetir.
+#
+# Cambios respecto del original: desaparece el `working-directory:
+# mv-data-engineering` de cada job (acá la raíz del repo ES el producto), y se
+# agrega el paso de `ruff`, que en el monorepo lo corría el job `calidad` sobre
+# la raíz de todo.
+
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Un push nuevo sobre la misma rama cancela la corrida anterior: no tiene
+  # sentido pagar runner por un commit que ya quedó viejo.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linter y la suite entera. Las dos demos corren las 12 etapas adentro de la
+  # suite, así que este job es también el que prueba el pipeline end-to-end.
+  calidad:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar
+        run: pip install -r requirements.txt
+
+      - name: Linter
+        # Ruff no está en requirements.txt a propósito: es herramienta de
+        # desarrollo, no dependencia del producto que se instala en la VM de
+        # un cliente.
+        run: |
+          pip install ruff
+          ruff check .
+
+      - name: Tests
+        run: python -m pytest -q tests
+
+  # El despliegue que se le entrega a un cliente cuando SUS datos no pueden
+  # salir de su red. No alcanza con que el compose sea válido: el perfil
+  # endurecido monta el disco raíz de sólo lectura, y una app que necesita
+  # escribir en un lugar que no previmos no falla al construir — falla al
+  # arrancar, en la VM del cliente, el día de la instalación.
+  contenedor-confidencial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credencial de prueba
+        # Login obligatorio en este perfil: sin una credencial válida `auth`
+        # falla CERRADO y no entra nadie, que es justo lo que hay que verificar
+        # que no pase por un hash mal generado.
+        run: |
+          mkdir -p secretos datos
+          python -c "import sys; sys.path.insert(0,'.'); from mvde import auth; print('ci:' + auth.hashear('clave-de-ci'))" > secretos/usuarios.txt
+          test -s secretos/usuarios.txt
+
+      - name: Construir y levantar el perfil confidencial
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.confidencial.yml up -d --build
+          docker compose -f docker-compose.yml -f docker-compose.confidencial.yml ps
+
+      - name: Arranca y contesta con el disco raíz de sólo lectura
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8501/_stcore/health >/dev/null 2>&1; then
+              echo "salud OK tras ${i} intentos"; ok=1; break
+            fi
+            sleep 3
+          done
+          if [ "${ok:-0}" != "1" ]; then
+            echo "::error::el contenedor no contestó; log completo abajo"
+            docker compose -f docker-compose.yml -f docker-compose.confidencial.yml logs --tail=120
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:8501 -o /dev/null
+
+      - name: El modo confidencial está ACTIVO adentro del contenedor
+        # Que la variable esté en el compose no prueba que el proceso la vea.
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.confidencial.yml exec -T mvde \
+            python -c "import sys; sys.path.insert(0,'/app'); from mvde import confidencial; \
+                       assert confidencial.activo(), 'el modo NO está activo dentro del contenedor'; \
+                       print('confidencial activo:', confidencial.estado()['bloquea'])"
+
+      - name: Los caminos de salida cortan DENTRO del contenedor
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.confidencial.yml exec -T mvde \
+            python -m pytest -q tests/test_confidencial.py
+
+      - name: El contenedor corre sin privilegios y sin capacidades
+        run: |
+          id_out=$(docker compose -f docker-compose.yml -f docker-compose.confidencial.yml exec -T mvde id -u)
+          echo "uid dentro del contenedor: $id_out"
+          [ "$(echo "$id_out" | tr -d '\r')" != "0" ] || { echo "::error::corre como root"; exit 1; }
+          caps=$(docker inspect mvde --format '{{.HostConfig.CapDrop}}')
+          echo "cap_drop: $caps"
+          case "$caps" in *ALL*) ;; *) echo "::error::no se soltaron las capacidades"; exit 1;; esac
+          ro=$(docker inspect mvde --format '{{.HostConfig.ReadonlyRootfs}}')
+          [ "$ro" = "true" ] || { echo "::error::el disco raíz NO es de sólo lectura"; exit 1; }
+
+      - name: Apagar
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.confidencial.yml down -v
