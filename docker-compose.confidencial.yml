@@ -57,8 +57,32 @@ services:
     read_only: true
     tmpfs:
       # Streamlit y matplotlib escriben temporales; sin esto no arranca.
-      - /tmp:size=512m
-      - /home/mvde:size=64m
+      #
+      # `uid`/`gid`/`mode` NO son decoración: sin ellos este perfil no levanta.
+      # Un tmpfs se monta VACÍO y con la propiedad que le da el runtime, no la
+      # que tenía la carpeta que tapa. Al montarlo sobre /home/mvde le tapa el
+      # HOME al usuario `mvde`, que corre sin privilegios, y el proceso deja de
+      # poder atravesar su propia carpeta. Lo que se ve entonces no es un error
+      # de permisos legible sino esto, en bucle, al arrancar:
+      #
+      #     PermissionError: [Errno 13] Permission denied:
+      #     '/home/mvde/.streamlit/secrets.toml'
+      #
+      # porque Streamlit busca ahí su cookie secret antes de servir la primera
+      # página. La imagen se construye, el contenedor arranca, y se muere.
+      #
+      # Fijando propietario y modo, el punto de montaje pertenece al usuario
+      # que corre la app y deja de depender del default del runtime, que no es
+      # el mismo en todas las versiones de Docker.
+      #
+      # Sólo pasa en este perfil: en el compose base no hay tmpfs y el HOME es
+      # el de la imagen, que `useradd --create-home` ya dejó del usuario.
+      #
+      # El 10001 está atado al `useradd --uid 10001 mvde` del Dockerfile. Si se
+      # cambia allá hay que cambiarlo acá, o el contenedor confidencial vuelve
+      # a no arrancar mientras el de siempre sigue andando.
+      - /tmp:size=512m,mode=1777
+      - /home/mvde:size=64m,mode=0700,uid=10001,gid=10001
 
     volumes:
       # Los datos del cliente: el único lugar con escritura real. Queda en la

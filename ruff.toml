@@ -1,0 +1,36 @@
+# Configuración de Ruff — linter del proyecto.
+#
+# Un `ruff.toml` dedicado en vez de `pyproject.toml`: esto no se instala como
+# paquete de Python (se distribuye como instalador de Windows y como imagen de
+# contenedor, ver `packaging/` y `Dockerfile`), y un `pyproject.toml` suelto
+# haría que las herramientas de build lo confundan con un paquete instalable.
+#
+# Reglas: el set por defecto de Ruff (E4/E7/E9 de pycodestyle + F de Pyflakes).
+# Es el que atrapa errores REALES — imports sin usar, variables muertas,
+# nombres indefinidos, f-strings mal escritos — sin imponer un formato. Se
+# declara explícito para que no cambie solo si Ruff cambia sus defaults.
+#
+# E501 (línea larga) queda afuera a propósito: hay comentarios explicativos
+# largos que son deliberados y no vale la pena romperlos.
+
+line-length = 100
+target-version = "py311"
+
+exclude = [
+    ".venv",
+    "build",
+    "dist",
+    "dist_instalador",
+    "runtime",          # el Python embebido que arma packaging/preparar_runtime.ps1
+    "node_modules",
+    "__pycache__",
+]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+# `daxlingo/dxl` NO se excluye, aunque sea una copia vendorizada: hoy pasa
+# limpio con este set, y dejarlo adentro hace que una re-copia futura que
+# arrastre un import roto o un nombre indefinido se vea acá en vez de en la VM
+# de un cliente. Si algún día el original deja de pasar, la decisión se toma
+# entonces y se escribe el motivo, no se excluye por comodidad.

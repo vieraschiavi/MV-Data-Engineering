@@ -1,0 +1,180 @@
+# Construye el instalador de Windows de MV Data Engineering y lo PRUEBA
+# instalándolo.
+#
+# Existe porque el desarrollo pasa en Linux, donde un instalador de Windows no
+# se puede ni compilar ni ejecutar. Sin este runner, "el instalador funciona" sería una
+# afirmación sin respaldo — y la forma en que estas cosas fallan no es no
+# compilando, es instalándose bien y no abriendo en la máquina del cliente.
+#
+# Por eso el job no termina en "se construyó". Instala en silencio, comprueba
+# que quedaron los accesos directos, ARRANCA el programa empaquetado, le pide
+# una página por HTTP, verifica que escuche SÓLO en localhost, y desinstala
+# comprobando que no deja restos.
+name: Instalador · MV Data Engineering
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - "packaging/**"
+      - "mvde/**"
+      - "app/**"
+      - "requirements.txt"
+      - ".streamlit/**"
+      - ".github/workflows/instalador.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instalador-mvde-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  construir-y-probar:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Armar el runtime embebido y el staging
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File packaging\preparar_runtime.ps1
+
+      - name: Compilar el instalador con Inno Setup
+        shell: pwsh
+        run: |
+          # Inno Setup viene preinstalado en windows-latest.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          & $iscc packaging\MVDataEngineering.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC falló" }
+          Get-ChildItem dist_instalador | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+
+      - name: Instalar en silencio
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem dist_instalador -Filter *.exe | Select-Object -First 1).FullName
+          # /VERYSILENT sin /SUPPRESSMSGBOXES a propósito: si el instalador
+          # necesita preguntar algo, queremos que el job se cuelgue y lo diga,
+          # no que alguien apruebe por nosotros en silencio.
+          $p = Start-Process $exe -ArgumentList "/VERYSILENT","/NORESTART","/DIR=$env:LOCALAPPDATA\MVDE" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "el instalador salió con código $($p.ExitCode)" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\MVDE\runtime\pythonw.exe")) { throw "no quedó el runtime instalado" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\MVDE\app\app.py"))          { throw "no quedó la aplicación instalada" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\MVDE\packaging\lanzador.py")) { throw "no quedó el lanzador" }
+
+      - name: Comprobar el acceso directo del menú Inicio
+        shell: pwsh
+        run: |
+          $lnk = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter "MV Data Engineering.lnk" |
+                 Select-Object -First 1
+          if (-not $lnk) { throw "no se creó el acceso directo del menú Inicio" }
+          $sh = New-Object -ComObject WScript.Shell
+          $a  = $sh.CreateShortcut($lnk.FullName)
+          Write-Host "destino:   $($a.TargetPath)"
+          Write-Host "argumentos:$($a.Arguments)"
+          # Tiene que apuntar a pythonw.exe: con python.exe abre una consola
+          # negra detrás del navegador en cada arranque.
+          if ($a.TargetPath -notmatch 'pythonw\.exe$') { throw "el acceso directo no apunta a pythonw.exe" }
+          if ($a.Arguments  -notmatch 'lanzador\.py')  { throw "el acceso directo no pasa el lanzador" }
+
+      - name: Arrancar el programa instalado y pedirle una página
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\MVDE"
+          Start-Process "$app\runtime\pythonw.exe" -ArgumentList "$app\packaging\lanzador.py" -WorkingDirectory $app
+          $log = "$env:LOCALAPPDATA\MV Data Engineering\lanzador.log"
+
+          # El lanzador elige un puerto libre y lo escribe en su log. Se lee de
+          # ahí en vez de asumir 8501: asumir el puerto es justamente lo que se
+          # quiso evitar.
+          $puerto = $null
+          foreach ($i in 1..60) {
+            Start-Sleep -Seconds 2
+            if (Test-Path $log) {
+              $m = Select-String -Path $log -Pattern 'puerto elegido: (\d+)' | Select-Object -Last 1
+              if ($m) { $puerto = $m.Matches[0].Groups[1].Value }
+            }
+            if ($puerto) {
+              try {
+                $r = Invoke-WebRequest "http://127.0.0.1:$puerto/_stcore/health" -TimeoutSec 3 -UseBasicParsing
+                if ($r.StatusCode -eq 200) { Write-Host "salud OK en el puerto $puerto"; break }
+              } catch { }
+            }
+          }
+          if (-not $puerto) { if (Test-Path $log) { Get-Content $log }; throw "el lanzador nunca eligió un puerto" }
+
+          $r = Invoke-WebRequest "http://127.0.0.1:$puerto" -TimeoutSec 20 -UseBasicParsing
+          if ($r.StatusCode -ne 200) { throw "la app respondió $($r.StatusCode)" }
+          if ($r.Content -notmatch 'streamlit') { throw "la respuesta no parece la app" }
+          Write-Host "la app instalada contesta 200 en el puerto $puerto"
+
+      - name: No debe escuchar fuera de localhost
+        shell: pwsh
+        run: |
+          $log = "$env:LOCALAPPDATA\MV Data Engineering\lanzador.log"
+          $puerto = (Select-String -Path $log -Pattern 'puerto elegido: (\d+)' | Select-Object -Last 1).Matches[0].Groups[1].Value
+          $escuchas = Get-NetTCPConnection -State Listen -LocalPort $puerto -ErrorAction SilentlyContinue
+          $escuchas | Format-Table LocalAddress, LocalPort
+          # Atarse a 0.0.0.0 dejaría el programa accesible desde toda la red
+          # local. Es una app de escritorio: sólo 127.0.0.1.
+          foreach ($e in $escuchas) {
+            if ($e.LocalAddress -ne "127.0.0.1") { throw "está escuchando en $($e.LocalAddress), no sólo en localhost" }
+          }
+          Write-Host "escucha únicamente en 127.0.0.1"
+
+      - name: Cerrar y desinstalar
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process pythonw, python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $unins = Get-ChildItem "$env:LOCALAPPDATA\MVDE" -Filter "unins*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($unins) {
+            $p = Start-Process $unins.FullName -ArgumentList "/VERYSILENT","/NORESTART" -Wait -PassThru
+            Write-Host "desinstalador salió con $($p.ExitCode)"
+            Start-Sleep -Seconds 5
+            if (Test-Path "$env:LOCALAPPDATA\MVDE\app\app.py") { throw "la desinstalación dejó la aplicación en el disco" }
+            Write-Host "desinstalado sin restos"
+          } else {
+            Write-Host "::warning::no se encontró el desinstalador (¿falló la instalación?)"
+          }
+
+      - name: Publicar el instalador
+        if: success()
+        # `continue-on-error` porque el veredicto de este job tiene que ser
+        # "¿el instalador funciona?", no "¿queda lugar en la cuota de
+        # artefactos de la cuenta?". La primera corrida murió acá con
+        # `Artifact storage quota has been hit` DESPUÉS de haber construido,
+        # instalado, arrancado, servido y desinstalado el programa sin un solo
+        # fallo: un check rojo que no decía nada sobre el código.
+        #
+        # No se silencia: falla el paso, queda el aviso de abajo y se ve en el
+        # resumen. Lo que no hace es tumbar la verificación entera.
+        continue-on-error: true
+        id: subir
+        uses: actions/upload-artifact@v4
+        with:
+          name: MV_DataEngineering_Setup
+          path: dist_instalador/*.exe
+          # El .exe ya viene comprimido con lzma2/max: volver a comprimirlo en
+          # un zip nivel 6 son 145 MB de CPU para ahorrar casi nada.
+          compression-level: 0
+          retention-days: 7
+
+      - name: Avisar si no se pudo publicar
+        if: success() && steps.subir.outcome == 'failure'
+        run: |
+          echo "::warning::El instalador se construyó y pasó todas las pruebas, pero no se pudo subir como artefacto (normalmente: cuota de almacenamiento de la cuenta llena). Liberá espacio en Settings -> Actions -> Storage y volvé a correr el workflow."
+
+      - name: Log del lanzador si algo falló
+        if: failure()
+        shell: pwsh
+        run: |
+          $log = "$env:LOCALAPPDATA\MV Data Engineering\lanzador.log"
+          if (Test-Path $log) { Get-Content $log } else { Write-Host "no hay log: el lanzador ni arrancó" }
