@@ -27,6 +27,26 @@ biblioteca estándar y Pillow.
 
 ## Cómo actualizarla
 
-Copiar de nuevo desde el origen, excluyendo `__pycache__`, y actualizar el
-commit de la tabla de arriba en el mismo cambio. Si la tabla y el contenido no
-coinciden, nadie puede saber qué versión está corriendo un cliente.
+1. Copiar de nuevo desde el origen, excluyendo `__pycache__`.
+2. Actualizar el commit de la tabla de arriba **en el mismo cambio**.
+3. Volver a firmar el inventario:
+
+```bash
+python scripts/verificar_vendor.py --firmar
+```
+
+El paso 3 no es opcional: `HASHES.txt` es el inventario firmado de la copia, y
+el CI lo verifica en cada push (`scripts/verificar_vendor.py` en el job
+`calidad`). Si el disco y la tabla no dicen lo mismo, el build falla.
+
+## Qué atrapa el chequeo, y qué no
+
+Atrapa las dos formas en que esto se rompe en silencio: que alguien **edite la
+copia a mano** para probar algo y quede así, y que se **re-copie sin actualizar
+el commit**, dejando una tabla que miente.
+
+Lo que **no** puede saber: si el ORIGEN cambió. El origen es otro repositorio y
+el chequeo corre sin acceso a él. Para eso hay que re-copiar y volver a firmar
+—que es justo cuando se actualiza el commit—. Si pasa mucho tiempo entre
+re-copias, la copia puede estar íntegra y vieja al mismo tiempo: íntegra es
+verificable acá, al día no.

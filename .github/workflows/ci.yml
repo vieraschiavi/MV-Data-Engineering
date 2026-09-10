@@ -53,6 +53,11 @@ jobs:
           pip install ruff
           ruff check .
 
+      - name: La copia vendorizada de dxl no derivó
+        # Atrapa las dos formas silenciosas de romperse: que alguien edite la
+        # copia a mano, y que se re-copie sin actualizar el commit anotado.
+        run: python scripts/verificar_vendor.py
+
       - name: Tests
         run: python -m pytest -q tests
 
