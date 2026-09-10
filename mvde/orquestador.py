@@ -436,6 +436,20 @@ class Pipeline:
             lineas += [f"- {r['regla']}: {r['detalle']} ({'crítica' if r['critico'] else 'informativa'})" for r in self.calidad.get("fallidas", [])] or ["- sin hallazgos"]
         if self.ml:
             lineas += ["", "## Modelo", ""] + [f"- {k}: {v}" for k, v in self.ml["metricas"].items()]
+        # La salud se calcula ANTES de escribir el RESUMEN, para que el resumen
+        # que se le manda al cliente lleve la leyenda de qué es ese número. Un
+        # «salud 96/100» suelto en un documento de entrega se cita en una
+        # reunión como si lo hubiera certificado alguien.
+        self.salud = salud.evaluar(self)
+        s = self.salud
+        lineas += ["", "## Autoevaluación de la corrida", ""]
+        if s["medido"]["puntaje"] is not None:
+            lineas.append(f"- **Medido sobre los datos** ({s['medido']['areas']} áreas): "
+                          f"{s['medido']['puntaje']}/100 — {s['medido']['de_que']}.")
+        lineas.append(f"- **Completitud de la configuración**: "
+                      f"{s['completitud']['declarados']} de {s['completitud']['posibles']} controles declarados"
+                      + (f" (faltan: {', '.join(s['completitud']['faltan'])})" if s["completitud"]["faltan"] else ""))
+        lineas += ["", f"> {s['nota']}", ""]
         lineas += ["", "## Artefactos", ""] + [f"- `{a}`" for e, r in self.resultados.items() for a in r.artefactos]
         p2 = self.dirs["entrega"] / "RESUMEN.md"
         p2.write_text("\n".join(lineas) + "\n", encoding="utf-8")
@@ -444,8 +458,6 @@ class Pipeline:
         reporte.guardar_json(self.dirs["entrega"] / "frescura.json",
                              {"resumen": frescura.resumen(self.frescura), "tablas": self.frescura})
         frescura.registrar(self, self.frescura)
-        # Salud de la corrida (por área) e historial para el antes/después.
-        self.salud = salud.evaluar(self)
         reporte.guardar_json(self.dirs["entrega"] / "salud.json", self.salud)
         salud.registrar(self, self.salud)
         # La justificación etapa por etapa, para técnicos y gerencia, en el idioma del proyecto y en inglés.
@@ -465,7 +477,7 @@ class Pipeline:
         self.transformaciones = {lang: transformaciones.exportar(self, self.dirs["entrega"], lang) for lang in dict.fromkeys([idioma, "en"])}
         r.evidencia["transformaciones"] = self.transformaciones
         r.artefactos += [v for d in self.transformaciones.values() for v in d.values() if not v.startswith("error")]
-        r.resumen = f"salud {self.salud['total']}/100 · manifiesto + resumen + justificación + transformaciones + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos"
+        r.resumen = f"autoevaluación {self.salud['total']}/100 (ver nota) · manifiesto + resumen + justificación + transformaciones + {len(list(self.dirs['entrega'].iterdir())) - 2} archivos"
         return r
 
 

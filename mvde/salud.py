@@ -23,6 +23,35 @@ from pathlib import Path
 import pandas as pd
 
 AREAS = ["datos", "calidad", "modelo", "gobernanza", "bi", "ml"]
+
+# Qué es cada área, porque no son la misma cosa y promediarlas sin decirlo es
+# lo que vuelve al puntaje indefendible frente a alguien que pregunta.
+#
+#   medicion  → sale de correr algo contra los datos REALES y tiene unidad:
+#               el % de reglas de calidad que pasaron, el sMAPE del backtest y
+#               si le gana a la estacional ingenua, la auditoría del .pbit, el
+#               conteo de columnas mal tipadas.
+#   checklist → mide si el YAML está completo, con pesos elegidos por quien
+#               escribió el motor (40 + 25 + 20 + 15 en `modelo`). Útil como
+#               recordatorio; no dice nada sobre la calidad del dato.
+TIPOS = ("medicion", "checklist")
+TIPO_DE_AREA = {
+    "datos": "medicion",        # cuenta columnas mal tipadas y claves únicas reales
+    "calidad": "medicion",      # reglas corridas contra los datos
+    "modelo": "checklist",      # ¿declaraste dimensiones, hechos, calendario?
+    "gobernanza": "checklist",  # ¿hay dueño? ¿declaraste las PII? (el % de doc es medido, el resto no)
+    "bi": "medicion",           # MV DAX Lab audita el .pbit que se generó
+    "ml": "medicion",           # métricas de backtest contra una referencia
+}
+
+NOTA_AUTOEVALUACION = (
+    "Este puntaje es una AUTOEVALUACIÓN del propio motor: no lo certifica nadie de "
+    "afuera y no mide la calidad de los datos del negocio. Las áreas de tipo «medicion» "
+    "salen de correr algo contra los datos reales; las de tipo «checklist» sólo verifican "
+    "que el proyecto esté declarado por completo, con pesos elegidos por quien escribió "
+    "el motor. Sirve para saber qué falta configurar, no para presentarlo como métrica "
+    "de calidad."
+)
 _MAGNITUD = ("monto", "importe", "amount", "precio", "price", "unidad", "cantidad", "qty", "dias", "edad", "age",
              "limite", "limit", "saldo", "cuota", "pago", "paid", "venta", "total", "ingreso", "costo")
 
@@ -169,8 +198,37 @@ def evaluar(pipeline) -> dict:
         # AUC 0,5 = azar → 0; AUC 0,9 = 100. R² directo. La brecha grande resta.
         p = (max(0.0, (float(base) - 0.5) / 0.4) * 100 if m.get("auc") is not None else max(0.0, float(base or 0)) * 100) - min(30, brecha * 300)
         areas["ml"] = {"puntaje": round(max(0, min(100, p)), 1), "detalle": f"{pipeline.ml.get('modelo')} · {'AUC' if m.get('auc') is not None else 'R²'} {base} · brecha {pipeline.ml.get('brecha_seleccion_holdout')}"}
+    # Cada área declara qué es antes de que nadie promedie nada.
+    for nombre, a in areas.items():
+        a["tipo"] = TIPO_DE_AREA.get(nombre, "checklist")
+
+    medidas = [a["puntaje"] for a in areas.values() if a["tipo"] == "medicion"]
+    listas = {n: a for n, a in areas.items() if a["tipo"] == "checklist"}
+    # En un checklist lo honesto es CONTAR, no puntuar: un área declarada por
+    # encima de 60 se toma como configurada.
+    declarados = sum(1 for a in listas.values() if a["puntaje"] >= 60)
+    posibles = sum(1 for n in AREAS if TIPO_DE_AREA.get(n, "checklist") == "checklist")
+
     total = round(sum(a["puntaje"] for a in areas.values()) / len(areas), 1) if areas else 0.0
-    return {"total": total, "areas": areas, "fecha": datetime.now().isoformat(timespec="seconds")}
+    return {
+        # `total` se mantiene por compatibilidad con el historial, el manifiesto
+        # y la app, pero ya no viaja solo.
+        "total": total,
+        "areas": areas,
+        "medido": {
+            "puntaje": round(sum(medidas) / len(medidas), 1) if medidas else None,
+            "areas": len(medidas),
+            "de_que": "reglas de calidad corridas, backtest del modelo y auditoría del .pbit",
+        },
+        "completitud": {
+            "declarados": declarados,
+            "posibles": posibles,
+            "faltan": [n for n, a in listas.items() if a["puntaje"] < 60],
+        },
+        "es_autoevaluacion": True,
+        "nota": NOTA_AUTOEVALUACION,
+        "fecha": datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 def registrar(pipeline, salud: dict) -> Path:
