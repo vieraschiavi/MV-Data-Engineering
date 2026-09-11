@@ -122,13 +122,24 @@ def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
                                          "monto_cuota": "Importe de la cuota que vence",
                                          "canal": "Canal por el que se cobró o se intentó cobrar",
                                          "clientes.default_proximo_mes": "1 si no paga la cuota del mes siguiente", "cuotas.monto_pagado": "Pagado en el mes (moneda local)"}},
-        "ml": {"sql": "SELECT r.default_proximo_mes, d.edad, d.educacion, d.sucursal, d.limite_credito, d.sexo, "
+        # El modelo NO ve `sexo`, y eso no es un detalle de la demo: es un
+        # atributo protegido y decidir una cobranza con él no se puede hacer en
+        # la mayoría de los marcos. Estaba en esta consulta y se sacó. Medido
+        # con el corte 60/20/20 fijado una vez (si no se fija, sacar la columna
+        # reparte otro holdout y los números no se comparan): AUC de holdout
+        # 0,7535 → 0,7569 y el lift del decil 10 queda igual en 2,77. O sea: no
+        # aportaba nada, porque el generador nunca usa el sexo para armar el
+        # riesgo. Un atributo protegido que ni siquiera predice es lo peor de
+        # los dos mundos. `sexo` sigue en la dimensión y en el tablero, donde
+        # describir la cartera es legítimo; lo que no entra es la DECISIÓN.
+        "ml": {"sql": "SELECT r.default_proximo_mes, d.edad, d.educacion, d.sucursal, d.limite_credito, "
                       "SUM(CASE WHEN f.en_mora THEN 1 ELSE 0 END) meses_en_mora, MAX(f.meses_atraso) max_atraso, "
                       "SUM(f.monto_pagado)/NULLIF(SUM(f.monto_cuota),0) pct_pagado, "
                       "MAX(CASE WHEN f.fecha_key >= 20251001 THEN f.meses_atraso ELSE 0 END) atraso_ult_trim "
                       "FROM gold.fact_cliente_riesgo r JOIN gold.dim_cliente d USING (dim_cliente_key) "
-                      "JOIN gold.fact_cuota f USING (dim_cliente_key) GROUP BY 1,2,3,4,5,6",
-               "target": "default_proximo_mes", "tipo": "clasificacion"},
+                      "JOIN gold.fact_cuota f USING (dim_cliente_key) GROUP BY 1,2,3,4,5",
+               "target": "default_proximo_mes", "tipo": "clasificacion",
+               "excluir": ["sexo"]},
         # El maestro de clientes se refresca todos los días; las cuotas son mensuales.
         "frescura": {"cada": "diaria", "tablas": {"cuotas": {"cada": "mensual"}, "fact_cuota": {"cada": "mensual"}}},
         "reporte": {"titulo": "Cobranzas · tablero de mora y default", "graficos": "auto"},
