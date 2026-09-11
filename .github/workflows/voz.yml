@@ -1,0 +1,59 @@
+# Voz y videos de MV Data Engineering.
+#
+# Existe por una razón concreta: edge-tts habla con `speech.platform.bing.com`,
+# y en el entorno de desarrollo el proxy devuelve 403 por política a ese host.
+# La locución no se puede generar ahí. Un runner de GitHub sí tiene salida, así
+# que la voz se sintetiza acá y los MP4 sonorizados quedan como artefacto.
+name: Voz y videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      idioma:
+        description: "Idioma (vacío = los tres)"
+        required: false
+        default: ""
+
+jobs:
+  voz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Instalar dependencias de generación
+        # No van en requirements.txt: son herramientas de producción de
+        # material, no dependencias del producto.
+        run: pip install --quiet edge-tts imageio imageio-ffmpeg pillow numpy
+
+      - name: Verificar que el guion esté completo en los tres idiomas
+        # Antes de gastar un minuto de runner: si a un idioma le falta una
+        # locución, el video sale mudo en el medio de una escena.
+        run: python assets/video/narracion.py --listar > /dev/null
+
+      - name: Generar la locución
+        run: python assets/video/narracion.py ${{ inputs.idioma && format('--idioma {0}', inputs.idioma) || '' }}
+
+      - name: Montar los videos
+        run: python assets/video/build_video.py ${{ inputs.idioma && format('--idioma {0}', inputs.idioma) || '' }}
+
+      - name: Comprobar que quedaron CON voz
+        # Un MP4 sin pista de audio es el modo de fallar callado de este
+        # workflow: se genera, pesa parecido y nadie lo nota hasta publicarlo.
+        run: |
+          fallo=0
+          for f in landing/video/*.mp4; do
+            pistas=$(ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$f" | wc -l)
+            printf '%-52s pistas de audio: %s\n' "$(basename "$f")" "$pistas"
+            [ "$pistas" -ge 1 ] || fallo=1
+          done
+          exit $fallo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mvde-videos
+          path: |
+            landing/video/*.mp4
+            assets/video/audio/**/*.mp3
+          retention-days: 30
