@@ -67,7 +67,16 @@ def _huella(df: pd.DataFrame) -> np.ndarray:
     desempate depende de cómo vino el DataFrame, el corte 60/20/20 cae en otro
     lado cada vez: otro holdout, otra tasa base, otro AUC y hasta otro modelo
     ganador. Medido: la misma demo daba AUC 0,6902 con Regresión logística y
-    0,7109 con Random Forest sobre datos idénticos."""
+    0,7109 con Random Forest sobre datos idénticos.
+
+    Lo que esto NO da, y conviene tener claro antes de comparar dos corridas:
+    estabilidad frente al ESQUEMA. La huella sale de la fila entera como texto,
+    así que agregar o quitar una columna —incluso una que después no se usa como
+    feature— le cambia el hash a todas las filas y reparte otro holdout, con
+    otra tasa base. Dos corridas con distinta lista de columnas no son
+    comparables, y la diferencia de AUC entre ellas no dice si el cambio sirvió.
+    Para medir el efecto de sacar una feature hay que fijar el corte una vez y
+    reusarlo; queda anotado en `notas` de cada corrida."""
     texto = df.astype(str).agg("\x1f".join, axis=1)
     return np.array([int(hashlib.blake2b(t.encode(), digest_size=8).hexdigest(), 16) for t in texto])
 
@@ -82,21 +91,43 @@ def _cortes(df: pd.DataFrame, cfg: dict, notas: list[str]) -> tuple[np.ndarray, 
         notas.append(f"corte temporal por {cfg['fecha']}: entreno con el pasado, selecciono y mido con el futuro")
     else:
         orden = np.argsort(huella, kind="stable")
-        notas.append("sin columna de fecha: corte por huella de contenido (reproducible)")
+        notas.append("sin columna de fecha: corte por huella de contenido (reproducible entre corridas "
+                     "del MISMO set; agregar o quitar una columna reparte otro holdout, así que dos "
+                     "corridas con distinta lista de columnas no se comparan entre sí)")
     n = len(df)
     a, b = int(n * 0.6), int(n * 0.8)
     return orden[:a], orden[a:b], orden[b:]
 
 
 def _modelos(tipo: str) -> dict:
+    """Los candidatos. Los lineales van CON escalado y los de árbol sin él.
+
+    Por qué el escalado no es cosmético en los lineales: lbfgs no converge con
+    features de escalas mezcladas (un límite de crédito en el orden de 1e6 al
+    lado de dummies 0/1) y se corta en `max_iter`, así que compite contra los
+    árboles con coeficientes a medio ajustar. Medido en la demo `kash`: sin
+    escalar largaba un `ConvergenceWarning`; con escalado no. El AUC casi no se
+    movió (0,8831 → 0,8833 en selección) y el ganador NO cambió — el escalado no
+    está acá para subir el puntaje, sino para que el modelo termine de ajustar.
+
+    Lo segundo que arregla es la importancia: para un lineal se reporta
+    `|coef_|`, y sin escalar los coeficientes de dos features con escalas
+    distintas no son comparables entre sí, así que la tabla de importancia
+    estaba ordenada por la unidad de cada columna tanto como por su efecto.
+
+    Y la penalización de Ridge castiga coeficientes: sin escalar, cada feature
+    recibe una regularización distinta según en qué unidad venga medida.
+    """
     from sklearn.ensemble import (GradientBoostingClassifier, GradientBoostingRegressor,
                                   RandomForestClassifier, RandomForestRegressor)
     from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
     if tipo == "clasificacion":
-        return {"Regresión logística": LogisticRegression(max_iter=2000),
+        return {"Regresión logística": make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000)),
                 "Random Forest": RandomForestClassifier(n_estimators=200, min_samples_leaf=5, random_state=42, n_jobs=-1),
                 "Gradient Boosting": GradientBoostingClassifier(n_estimators=150, max_depth=3, random_state=42)}
-    return {"Ridge": Ridge(alpha=1.0),
+    return {"Ridge": make_pipeline(StandardScaler(), Ridge(alpha=1.0)),
             "Random Forest": RandomForestRegressor(n_estimators=200, min_samples_leaf=5, random_state=42, n_jobs=-1),
             "Gradient Boosting": GradientBoostingRegressor(n_estimators=150, max_depth=3, random_state=42)}
 
@@ -189,10 +220,13 @@ def entrenar(df: pd.DataFrame, cfg: dict, df_score: pd.DataFrame | None = None) 
         brecha = round(met_sel["sel_r2"] - met_ho["r2"], 4)
     notas.append(f"mejor modelo por selección: {mejor}; brecha selección→holdout {brecha}")
     imp = None
-    if hasattr(m, "feature_importances_"):
-        imp = pd.Series(m.feature_importances_, index=X.columns)
-    elif hasattr(m, "coef_"):
-        imp = pd.Series(np.abs(np.ravel(m.coef_)), index=X.columns)
+    # Los lineales van dentro de un Pipeline con el escalador: el estimador real
+    # es el último paso, y sin desenvolverlo `importancia` sale vacía.
+    nucleo = m[-1] if hasattr(m, "steps") else m
+    if hasattr(nucleo, "feature_importances_"):
+        imp = pd.Series(nucleo.feature_importances_, index=X.columns)
+    elif hasattr(nucleo, "coef_"):
+        imp = pd.Series(np.abs(np.ravel(nucleo.coef_)), index=X.columns)
     importancia = {k: round(float(v), 4) for k, v in imp.sort_values(ascending=False).head(15).items()} if imp is not None else {}
 
     # Scoring: el propio set (para el tablero) o el conjunto a scorear.
@@ -211,5 +245,8 @@ def entrenar(df: pd.DataFrame, cfg: dict, df_score: pd.DataFrame | None = None) 
     return {
         "tipo": tipo, "modelo": mejor, "filas_train": int(len(tr)), "filas_seleccion": int(len(sel)), "filas_holdout": int(len(ho)),
         "filas_scoreadas": int(len(scores)), "metricas": met_ho, "brecha_seleccion_holdout": brecha,
+        # Qué vio el modelo, completo y no sólo el top 15 de `importancia`: es lo
+        # que permite revisar después si entró una columna que no debía entrar.
+        "features": list(X.columns),
         "comparacion": tabla, "importancia": importancia, "notas": notas, "scores": scores,
     }

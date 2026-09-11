@@ -30,7 +30,7 @@ services:
       # El interruptor. Con esto puesto, el motor CORTA —con una excepción que
       # nombra qué se intentó y hacia dónde— en los cinco caminos por los que un
       # dato puede cruzar el borde: fuentes por URL, rutas de nube, descarga de
-      # Kaggle, consultas a proveedores de IA y transcripción remota de audio.
+      # Kaggle y consultas a proveedores de IA.
       #
       # La IA no se rompe: cae al modo LOCAL, que responde con los KPIs, la
       # calidad y el catálogo de la corrida sin salir de la máquina.

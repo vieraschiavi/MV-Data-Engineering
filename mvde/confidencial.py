@@ -28,14 +28,16 @@ y apagarlo sin reimportar nada.
 
 Qué bloquea, exactamente
 ------------------------
-Los cuatro lugares del motor por donde un dato puede cruzar el borde de la
-red:
+Los lugares del motor por donde un dato puede cruzar el borde de la red:
 
   fuentes.py    fuentes `url`, fuentes `kaggle`, y rutas de nube
                 (s3:// gs:// az:// abfs:// adl://)
   ia.py         cualquier consulta a un proveedor de IA, y el listado de
                 modelos — que ya viaja con la clave
-  reuniones.py  transcripción de audio contra un servicio remoto
+
+`reuniones.py` no aparece porque ya no manda nada a la red: transcribía audio
+contra OpenAI o Groq y se le sacó esa capacidad — el `.vtt` que exporta Teams
+ya viene transcripto, con hablantes y sin conexión.
 
 Qué NO bloquea, y por qué
 -------------------------
@@ -104,8 +106,8 @@ def estado() -> dict:
     return {
         "activo": enc,
         "variable": ENV,
-        "bloquea": ["fuentes url", "fuentes kaggle", "rutas de nube", "proveedores de IA",
-                    "transcripción remota de audio"] if enc else [],
+        "bloquea": ["fuentes url", "fuentes kaggle", "rutas de nube",
+                    "proveedores de IA"] if enc else [],
         "nota": ("Esta corrida no pudo sacar datos de la red donde se ejecutó."
                  if enc else
                  "Modo confidencial APAGADO: el proyecto puede leer de internet y consultar "

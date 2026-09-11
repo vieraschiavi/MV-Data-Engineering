@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import json
+import unicodedata
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
@@ -54,6 +55,40 @@ NOTA_AUTOEVALUACION = (
 )
 _MAGNITUD = ("monto", "importe", "amount", "precio", "price", "unidad", "cantidad", "qty", "dias", "edad", "age",
              "limite", "limit", "saldo", "cuota", "pago", "paid", "venta", "total", "ingreso", "costo")
+
+# Bandas del puntaje de clasificación. Son una CONVENCIÓN de este motor, no un
+# estándar de la industria, y están acá arriba para que se puedan discutir.
+#
+# Por qué el techo está en 0,80 y no en 1,0: en riesgo de crédito y cobranzas un
+# modelo de producción vive entre 0,70 y 0,85 de AUC. Por encima de 0,80 más AUC
+# no es más credibilidad, y por encima de `_AUC_SOSPECHA` lo habitual es que una
+# columna del futuro se haya colado entre las features. La fórmula anterior
+# premiaba el AUC sin techo hasta 0,90: le daba 100 tanto a un modelo excelente
+# como a uno con fuga, en el mismo motor que tiene un chequeo de fugas.
+# Atributos que en la mayoría de los marcos de crédito y cobranzas NO se pueden
+# usar para decidir sobre una persona. La lista es a propósito CORTA y es un
+# disparador para que lo mire un humano, no un dictamen legal: el marco que
+# aplica lo fija el cumplimiento del cliente, no este archivo.
+#
+# `edad` NO está: en scoring de crédito se usa de forma habitual y legal en
+# varias jurisdicciones. `educacion`, `sucursal` o el barrio pueden funcionar
+# como proxy y tampoco están — un proxy no se detecta por el nombre de la
+# columna, hace falta medir su correlación con el atributo protegido, y eso es
+# un análisis aparte que este chequeo no hace y no pretende reemplazar.
+PROTEGIDOS = ("sexo", "sex", "genero", "gender", "raza", "race", "etnia", "ethnic",
+              "religion", "credo", "nacionalidad", "nationality", "discapacidad",
+              "disability", "embarazo", "pregnan", "orientacion_sexual", "estado_civil",
+              "marital", "sindicato", "sindical", "union_member", "partido_politico")
+
+_AUC_AZAR = 0.50          # no discrimina nada
+_AUC_TECHO = 0.80         # de acá para arriba el puntaje no sube más
+_AUC_SOSPECHA = 0.95      # de acá para arriba se descuenta y se marca
+_CASTIGO_SOSPECHA = 30.0
+# Reparto: la discriminación es la propiedad del modelo, el lift del decil 10 es
+# la que decide si la operación gana algo («llamá a este 10 % y acertás N veces
+# más que al azar»). Las dos cuentan; la primera es más básica.
+_PESO_DISCRIMINACION = 70.0
+_PESO_LIFT = 30.0
 
 
 # ------------------------------------------------------------------ ayudas
@@ -131,6 +166,82 @@ def sugerir_target(df: pd.DataFrame, excluir: set[str] | None = None) -> list[di
 
 
 # ------------------------------------------------------------------ salud
+def _features_protegidas(features: list[str]) -> set[str]:
+    """Qué features del modelo parecen un atributo protegido.
+
+    Compara sobre el nombre normalizado (sin tildes, en minúsculas) y devuelve
+    la columna ORIGINAL, no la dummy: `get_dummies` parte `sexo` en
+    `sexo_Femenino` y `sexo_Masculino`, y lo que hay que excluir en el YAML es
+    `sexo`. Se exige que el término sea una palabra del nombre y no un pedazo
+    de otra, para no marcar `sexto_mes` ni `raza` dentro de `terraza`.
+    """
+    import re
+    protegidas = set()
+    for f in features:
+        limpio = "".join(c for c in unicodedata.normalize("NFKD", str(f).lower())
+                         if not unicodedata.combining(c))
+        for termino in PROTEGIDOS:
+            if re.search(rf"(?:^|_){re.escape(termino)}(?:_|$)", limpio):
+                # `sexo_Femenino` → `sexo`; `estado_civil_Casado` → `estado_civil`.
+                corte = re.search(rf"(?:^|_){re.escape(termino)}(?:_|$)", limpio)
+                protegidas.add(str(f)[:corte.end() - (1 if limpio[corte.end() - 1] == "_" else 0)])
+                break
+    return protegidas
+
+
+def _puntaje_clasificacion(res: dict) -> dict:
+    """Puntaje de un modelo de clasificación, con las métricas que el propio
+    motor ya calcula y una banda anclada al oficio.
+
+    Tres partes:
+
+      · **Discriminación** (hasta `_PESO_DISCRIMINACION`): AUC-ROC de `_AUC_AZAR`
+        a `_AUC_TECHO`, y plano de ahí en adelante.
+      · **Utilidad operativa** (hasta `_PESO_LIFT`): el lift del decil 10,
+        normalizado por su propio techo. Esto importa: el lift máximo posible es
+        `1 / tasa_base`, así que con una tasa base de 47 % un lift de 2,0 ya es
+        casi perfecto, mientras que con una tasa de 21 % el mismo 2,0 es la
+        mitad de lo alcanzable. Comparar lifts crudos entre problemas con
+        distinta prevalencia no dice nada.
+      · **Descuentos**: la brecha selección→holdout (un modelo elegido con un
+        set y medido con otro que se desploma no es confiable) y la sospecha de
+        fuga por AUC demasiado alto.
+
+    Lo que esta función NO hace es premiar el AUC sin techo. Un modelo con fuga
+    tiene que puntuar PEOR que uno honesto, no mejor: `tests/test_salud_ml.py`
+    lo verifica, porque es la propiedad por la que se cambió la fórmula.
+    """
+    m = res.get("metricas") or {}
+    auc = float(m["auc"])
+    brecha = abs(float(res.get("brecha_seleccion_holdout") or 0))
+    detalle = [f"{res.get('modelo')}", f"AUC {round(auc, 4)}"]
+
+    tramo = (auc - _AUC_AZAR) / (_AUC_TECHO - _AUC_AZAR)
+    disc = _PESO_DISCRIMINACION * max(0.0, min(1.0, tramo))
+
+    lift, base = m.get("lift_decil10"), m.get("tasa_base")
+    util, cuanto = 0.0, None
+    if lift is not None and base not in (None, 0) and 0 < float(base) < 1:
+        techo = 1.0 / float(base)                      # el lift no puede pasar de acá
+        cuanto = (float(lift) - 1.0) / (techo - 1.0) if techo > 1 else 0.0
+        util = _PESO_LIFT * max(0.0, min(1.0, cuanto))
+        detalle.append(f"lift decil 10 {lift} de {round(techo, 2)} posible "
+                       f"({round(max(0.0, min(1.0, cuanto)) * 100)} % de lo alcanzable)")
+    else:
+        # Sin lift medible no se inventa: se reparte sobre lo que sí se midió.
+        disc = disc * (_PESO_DISCRIMINACION + _PESO_LIFT) / _PESO_DISCRIMINACION
+        detalle.append("sin lift medible (pocas filas o una sola clase)")
+
+    castigo_brecha = min(30.0, brecha * 300)
+    sospecha = auc >= _AUC_SOSPECHA
+    p = disc + util - castigo_brecha - (_CASTIGO_SOSPECHA if sospecha else 0.0)
+    detalle.append(f"brecha {res.get('brecha_seleccion_holdout')}")
+    if sospecha:
+        detalle.append(f"AUC ≥ {_AUC_SOSPECHA}: se descuenta por sospecha de fuga")
+    return {"puntaje": round(max(0.0, min(100.0, p)), 1), "detalle": " · ".join(detalle),
+            "sospecha_fuga": sospecha}
+
+
 def evaluar(pipeline) -> dict:
     spec, r = pipeline.spec, pipeline.resultados
     areas: dict[str, dict] = {}
@@ -191,13 +302,14 @@ def evaluar(pipeline) -> dict:
         areas["ml"] = {"puntaje": round(max(0, min(100, p)), 1),
                        "detalle": f"{pipeline.ml.get('modelo')} · sMAPE {round(smape, 2)} % · {veredicto} · "
                                   f"{m.get('origenes_backtest')} orígenes de backtest"}
+    elif pipeline.ml and (pipeline.ml.get("metricas") or {}).get("auc") is not None:
+        areas["ml"] = _puntaje_clasificacion(pipeline.ml)
     elif pipeline.ml:
         m = pipeline.ml.get("metricas") or {}
-        base = m.get("auc") if m.get("auc") is not None else m.get("r2")
         brecha = abs(float(pipeline.ml.get("brecha_seleccion_holdout") or 0))
-        # AUC 0,5 = azar → 0; AUC 0,9 = 100. R² directo. La brecha grande resta.
-        p = (max(0.0, (float(base) - 0.5) / 0.4) * 100 if m.get("auc") is not None else max(0.0, float(base or 0)) * 100) - min(30, brecha * 300)
-        areas["ml"] = {"puntaje": round(max(0, min(100, p)), 1), "detalle": f"{pipeline.ml.get('modelo')} · {'AUC' if m.get('auc') is not None else 'R²'} {base} · brecha {pipeline.ml.get('brecha_seleccion_holdout')}"}
+        p = max(0.0, float(m.get("r2") or 0)) * 100 - min(30, brecha * 300)
+        areas["ml"] = {"puntaje": round(max(0, min(100, p)), 1),
+                       "detalle": f"{pipeline.ml.get('modelo')} · R² {m.get('r2')} · brecha {pipeline.ml.get('brecha_seleccion_holdout')}"}
     # Cada área declara qué es antes de que nadie promedie nada.
     for nombre, a in areas.items():
         a["tipo"] = TIPO_DE_AREA.get(nombre, "checklist")
@@ -412,6 +524,26 @@ def sugerencias(pipeline) -> list[dict]:
                                 "titulo": f"Fuga de información: {', '.join(cols)} replican el target",
                                 "detalle": "Se quitaron en la corrida; conviene excluirlas en el YAML para que quede escrito.",
                                 "parche": {"ml_excluir": cols}})
+        protegidas = _features_protegidas(pipeline.ml.get("features") or [])
+        if protegidas:
+            out.append({"area": "ml", "codigo": "atributo_protegido", "severidad": "alta", "aplicable": True,
+                        "titulo": f"El modelo decide con un atributo protegido: {', '.join(sorted(protegidas))}",
+                        "detalle": "En la mayoría de los marcos de crédito y cobranzas no se puede decidir "
+                                   "sobre una persona con estos datos, y un gerente de riesgo que lo note "
+                                   "corta la reunión ahí mismo. El parche los excluye del modelo; si el caso de uso "
+                                   "los necesita de verdad (un estudio demográfico, no una decisión), hay "
+                                   "que dejarlo escrito y aprobado. El chequeo mira el NOMBRE de la "
+                                   "columna: no detecta un proxy, y no reemplaza una revisión de sesgo.",
+                        "parche": {"ml_excluir": sorted(protegidas)}})
+        auc_medido = (pipeline.ml.get("metricas") or {}).get("auc")
+        if auc_medido is not None and float(auc_medido) >= _AUC_SOSPECHA:
+            out.append({"area": "ml", "codigo": "auc_sospechoso", "severidad": "alta", "aplicable": False,
+                        "titulo": f"AUC de {auc_medido}: demasiado alto para ser cierto",
+                        "detalle": "En riesgo de crédito un AUC así casi siempre significa que una columna "
+                                   "del futuro entró entre las features. El chequeo de correlación sólo "
+                                   "atrapa las que replican el target casi exactamente; una que lo replica "
+                                   "parcialmente pasa. Revisar una por una de qué momento sale cada "
+                                   "feature respecto de la fecha en que se decide."})
         m = pipeline.ml.get("metricas") or {}
         if m.get("tasa_base") is not None and (m["tasa_base"] < 0.05 or m["tasa_base"] > 0.95):
             out.append({"area": "ml", "codigo": "desbalance", "severidad": "media", "aplicable": False,

@@ -466,8 +466,7 @@ with tab_survey:
 with tab_meet:
     st.markdown(t("mt_intro", lang))
     titulo_rn = st.text_input(t("mt_title", lang), key="mt_titulo")
-    origen = st.radio(t("mt_source", lang),
-                      ["mt_src_file", "mt_src_audio", "mt_src_mic", "mt_src_paste"],
+    origen = st.radio(t("mt_source", lang), ["mt_src_file", "mt_src_paste"],
                       format_func=lambda k: t(k, lang), horizontal=True, key="mt_origen")
     turnos = st.session_state.get("mvde_turnos") or []
 
@@ -482,31 +481,11 @@ with tab_meet:
         if sub is not None and st.button(t("mt_build", lang), key="mt_b_file", type="primary"):
             _cargar_turnos(reuniones.parsear(sub.getvalue().decode("utf-8", "ignore"), sub.name))
             st.rerun()
-    elif origen == "mt_src_paste":
+    else:
         texto_rn = st.text_area(t("mt_transcript", lang), height=200, key="mt_texto")
         if texto_rn.strip() and st.button(t("mt_build", lang), key="mt_b_paste", type="primary"):
             _cargar_turnos(reuniones.parsear(texto_rn))
             st.rerun()
-    else:
-        st.caption(t("mt_audio_hint", lang).format(mb=reuniones.LIMITE_MB) if origen == "mt_src_audio"
-                   else t("mt_mic_hint", lang))
-        audio = (st.file_uploader("audio / video", type=list(reuniones.FORMATOS_AUDIO), key="mt_audio")
-                 if origen == "mt_src_audio" else st.audio_input(t("mt_src_mic", lang), key="mt_mic"))
-        c1, c2 = st.columns([2, 3])
-        trans = c1.selectbox(t("mt_provider", lang), list(reuniones.TRANSCRIPTORES),
-                             format_func=lambda k: reuniones.TRANSCRIPTORES[k]["nombre"], key="mt_prov")
-        clave_rn = c2.text_input(t("ai_key", lang), type="password",
-                                 value=st.session_state.get("ai_key", "") if st.session_state.get("ai_prov") == trans else "",
-                                 key="mt_key")
-        if audio is not None and st.button(t("mt_transcribe", lang), key="mt_b_audio", type="primary"):
-            with st.spinner("…"):
-                try:
-                    r = reuniones.transcribir(audio.getvalue(), getattr(audio, "name", "audio.wav"),
-                                              trans, clave_rn, idioma=lang)
-                    _cargar_turnos(r["turnos"], t("mt_no_speakers", lang))
-                    st.rerun()
-                except RuntimeError as exc:
-                    st.error(str(exc))
 
     if not turnos:
         st.info(t("mt_empty", lang))

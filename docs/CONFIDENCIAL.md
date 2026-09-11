@@ -93,7 +93,7 @@ datos salgan de su red.
 
 ## Qué bloquea exactamente el modo confidencial
 
-Con `MVDE_CONFIDENCIAL=1`, el motor **corta con una excepción** en los cinco
+Con `MVDE_CONFIDENCIAL=1`, el motor **corta con una excepción** en los cuatro
 caminos por los que un dato puede cruzar el borde de la red:
 
 | Camino | Qué pasa |
@@ -102,7 +102,6 @@ caminos por los que un dato puede cruzar el borde de la red:
 | Ruta de nube (`s3://`, `gs://`, `az://`, `abfs://`, `adl://`) | Bloqueada |
 | Descarga de un dataset de Kaggle | Bloqueada (un archivo ya bajado se lee igual) |
 | Consulta a un proveedor de IA | La IA cae al **modo local**, que responde con los datos de la corrida sin salir |
-| Transcripción de audio en un servicio remoto | Bloqueada (el `.vtt` de Teams, que ya viene transcripto, funciona igual) |
 
 Lo que **no** bloquea, a propósito: fuentes SQL y archivos locales. Son la red
 del cliente y el disco de su propia VM. El borde que se defiende es la **salida**
@@ -129,7 +128,7 @@ entrega lleva:
   "activo": true,
   "variable": "MVDE_CONFIDENCIAL",
   "bloquea": ["fuentes url", "fuentes kaggle", "rutas de nube",
-              "proveedores de IA", "transcripción remota de audio"],
+              "proveedores de IA"],
   "nota": "Esta corrida no pudo sacar datos de la red donde se ejecutó."
 }
 ```
