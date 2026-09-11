@@ -1,20 +1,27 @@
 # © 2026 Martín Viera. Todos los derechos reservados.
-"""Reuniones: del audio a la minuta, y de la minuta a decisiones del pipeline.
+"""Reuniones: de la minuta a decisiones del pipeline.
 
-Tres caminos de entrada, del mejor al más trabajoso:
+Esto NO es una herramienta de reuniones. Es el puente entre lo que se dijo en
+una reunión de relevamiento y las 12 etapas del pipeline, y ese puente es lo
+único que hace acá que Teams, Zoom o cualquier transcriptor no haga mejor.
 
-  1. **La transcripción que ya generó la plataforma.** Teams, Zoom, Meet y WebEx
-     exportan `.vtt` con el nombre de quien habla y el minuto exacto. Es la
-     mejor fuente que existe y no necesita ni clave de IA ni conexión: quién
-     dijo qué viene resuelto de fábrica.
-  2. **Un archivo de audio o video** de la grabación, que se transcribe con la
-     clave del usuario (OpenAI o Groq, que exponen el endpoint de audio).
-  3. **El micrófono**, para la reunión presencial que no tiene grabación.
+La entrada es **la transcripción que ya generó la plataforma**: Teams, Zoom,
+Meet y WebEx exportan `.vtt` con el nombre de quien habla y el minuto exacto.
+Es la mejor fuente que existe, no necesita clave de IA ni conexión, y quién
+dijo qué viene resuelto de fábrica. También se acepta texto pegado a mano.
 
-Sobre los caminos 2 y 3 hay que ser honesto: **la transcripción de audio suelto
-no separa hablantes**. Devuelve el texto con sus tiempos, y quién habló se
-asigna a mano. Prometer lo contrario sería vender una minuta con nombres
-inventados, que es peor que no tener minuta.
+**Por qué no transcribe audio.** Lo hacía, contra OpenAI o Groq, y se sacó a
+propósito por tres razones que se suman:
+
+  1. El audio de una reunión con el cliente es el dato más sensible de todo el
+     proyecto. Subirlo a un tercero para ahorrar un paso manual no es un
+     intercambio que valga la pena, y en el perfil confidencial estaba
+     bloqueado de todas formas.
+  2. La transcripción de audio suelto **no separa hablantes**: devolvía el texto
+     con sus tiempos y quién habló se asignaba a mano. Una minuta de
+     relevamiento sin «quién dijo qué» pierde justamente lo que la hace servir.
+  3. Todas las plataformas que el cliente ya usa generan el `.vtt` gratis,
+     offline y CON hablantes. Competir con eso era perder por decisión propia.
 
 La minuta sale de la transcripción con reglas, sin IA: participantes y cuánto
 habló cada uno, decisiones, compromisos, preguntas abiertas, riesgos y menciones
@@ -25,24 +32,12 @@ en lugar de la evidencia.
 from __future__ import annotations
 
 import json
-
-from . import confidencial
 import re
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-# Proveedores con endpoint de transcripción de audio. El resto de los que la app
-# ofrece para texto no transcriben: decirlo es mejor que fallar con un 404.
-TRANSCRIPTORES = {
-    "openai": {"url": "https://api.openai.com/v1/audio/transcriptions", "modelo": "whisper-1",
-               "nombre": "OpenAI (Whisper)"},
-    "groq": {"url": "https://api.groq.com/openai/v1/audio/transcriptions", "modelo": "whisper-large-v3",
-             "nombre": "Groq (Whisper large v3)"},
-}
-FORMATOS_AUDIO = ("mp3", "mp4", "m4a", "wav", "webm", "ogg", "mpga", "mpeg")
 FORMATOS_TEXTO = ("vtt", "srt", "txt", "md")
-LIMITE_MB = 25          # el que aceptan los dos endpoints
 
 # Términos que atan una frase a una etapa del pipeline. Mezcla los tres idiomas a
 # propósito: en una reunión real se habla mitad y mitad.
@@ -168,62 +163,6 @@ def _fusionar(turnos: list[dict]) -> list[dict]:
         else:
             salida.append(dict(tn))
     return salida
-
-
-# ------------------------------------------------------------------ transcripción
-def transcribir(audio: bytes, nombre_archivo: str, proveedor: str, api_key: str,
-                modelo: str = "", idioma: str = "es") -> dict:
-    """Audio a texto con la clave del usuario. Devuelve texto y segmentos con
-    tiempos; NO devuelve hablantes, porque el endpoint no los da."""
-    import urllib.error
-    import urllib.request
-    cfg = TRANSCRIPTORES.get(proveedor)
-    if not cfg:
-        disponibles = ", ".join(c["nombre"] for c in TRANSCRIPTORES.values())
-        raise RuntimeError(f"«{proveedor}» no transcribe audio. Con endpoint de audio: {disponibles}.")
-    if not api_key:
-        raise RuntimeError(f"Falta la clave de {cfg['nombre']}.")
-    if len(audio) > LIMITE_MB * 1024 * 1024:
-        raise RuntimeError(f"El archivo pesa {len(audio) / 1024 / 1024:.1f} MB y el límite es {LIMITE_MB} MB. "
-                           "Comprimilo a mp3 o partilo en tramos.")
-    limite = "----mvde" + datetime.now().strftime("%H%M%S%f")
-    partes: list[bytes] = []
-
-    def campo(nombre: str, valor: str) -> None:
-        partes.append(f"--{limite}\r\nContent-Disposition: form-data; name=\"{nombre}\"\r\n\r\n{valor}\r\n".encode())
-
-    campo("model", modelo or cfg["modelo"])
-    campo("response_format", "verbose_json")
-    if idioma:
-        campo("language", idioma)
-    partes.append(f"--{limite}\r\nContent-Disposition: form-data; name=\"file\"; "
-                  f"filename=\"{nombre_archivo}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode())
-    partes.append(audio)
-    partes.append(f"\r\n--{limite}--\r\n".encode())
-    cuerpo = b"".join(partes)
-    pedido = urllib.request.Request(cfg["url"], data=cuerpo, method="POST", headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": f"multipart/form-data; boundary={limite}",
-    })
-    # Un audio de una reunión con el cliente es dato del cliente: mandarlo a
-    # transcribir a un servicio externo es exactamente la fuga que el modo
-    # existe para impedir. El .vtt de Teams, que ya viene transcripto y no
-    # requiere red, sigue funcionando igual.
-    confidencial.exigir_local("transcribir audio en un servicio remoto", cfg.get("nombre", ""))
-    try:
-        with urllib.request.urlopen(pedido, timeout=600) as r:
-            datos = json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detalle = exc.read().decode("utf-8", "ignore")[:300]
-        raise RuntimeError(f"{cfg['nombre']} respondió {exc.code}: {detalle}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"No se pudo llegar a {cfg['nombre']}: {exc.reason}") from exc
-    segmentos = [{"hablante": None, "inicio": s.get("start"), "fin": s.get("end"),
-                  "texto": (s.get("text") or "").strip()}
-                 for s in (datos.get("segments") or []) if (s.get("text") or "").strip()]
-    return {"texto": datos.get("text", ""), "turnos": _fusionar(segmentos) if segmentos else
-            [{"hablante": None, "inicio": None, "fin": None, "texto": datos.get("text", "")}],
-            "modo": f"{proveedor}/{modelo or cfg['modelo']}", "sin_hablantes": True}
 
 
 # ------------------------------------------------------------------ análisis

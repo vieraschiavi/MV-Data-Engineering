@@ -1,6 +1,8 @@
 """Relevamiento (preguntas al cliente, repreguntas, puente al YAML) y reuniones
-(transcripción a minuta, y de la minuta a respuestas del relevamiento)."""
+(minuta desde la transcripción de la plataforma, y de la minuta a respuestas del
+relevamiento)."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -171,14 +173,21 @@ def test_de_la_reunion_salen_respuestas_propuestas_para_el_relevamiento():
         assert prop["texto"] and prop["coincidencias"] >= 2
 
 
-def test_transcribir_avisa_cuando_el_proveedor_no_transcribe():
-    with pytest.raises(RuntimeError, match="no transcribe audio"):
-        reuniones.transcribir(b"x", "a.mp3", "claude", "clave")
-    with pytest.raises(RuntimeError, match="[Ff]alta la clave"):
-        reuniones.transcribir(b"x", "a.mp3", "openai", "")
-    grande = b"x" * (reuniones.LIMITE_MB * 1024 * 1024 + 1)
-    with pytest.raises(RuntimeError, match="límite"):
-        reuniones.transcribir(grande, "a.mp3", "openai", "clave")
+def test_el_modulo_no_manda_audio_a_ningun_servicio():
+    """La transcripción de audio se sacó a propósito y no tiene que volver por
+    la ventana: el audio de una reunión con el cliente es el dato más sensible
+    del proyecto, el audio suelto no separa hablantes, y Teams ya exporta el
+    `.vtt` gratis y sin conexión. Si alguien reintroduce el camino, este test
+    lo marca antes de que llegue a un cliente."""
+    for nombre in ("transcribir", "TRANSCRIPTORES", "FORMATOS_AUDIO", "LIMITE_MB"):
+        assert not hasattr(reuniones, nombre), f"volvió {nombre}: el audio no sale del cliente"
+    fuente = Path(reuniones.__file__).read_text(encoding="utf-8")
+    for host in ("api.openai.com", "api.groq.com", "urllib.request"):
+        assert host not in fuente, f"el módulo volvió a hablar con la red ({host})"
+
+
+def test_acepta_solo_los_formatos_de_texto_que_exportan_las_plataformas():
+    assert set(reuniones.FORMATOS_TEXTO) == {"vtt", "srt", "txt", "md"}
 
 
 def test_guardar_y_listar_minutas(tmp_path):

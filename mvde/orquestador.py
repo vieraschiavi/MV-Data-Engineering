@@ -405,8 +405,29 @@ class Pipeline:
                                    embebido=True, idioma=self.spec.get("idioma", "es"))
         ev = {"tablas": info["tablas"], "medidas": info["medidas"], "relaciones": info["relaciones"], "auditoria": info["auditoria"],
               "hallazgos": info["hallazgos"], **({"demo_embebida": demo["auditoria"]} if demo else {})}
-        arts = [info["pbit"], info["pbip"]] + ([demo["pbit"]] if demo else [])
-        return Resultado("powerbi", True, f".pbit + PBIP · auditoría {info['auditoria']}/100", ev, arts)
+        # Los dos .pbit NO son lo mismo y hay que decir cuál es cuál. El
+        # parametrizado pide la carpeta de CSV al abrirlo (conecta a los datos
+        # del cliente); el `_demo` los trae adentro y abre solo. En una
+        # presentación se abre el segundo: el primero manda a Power BI a pedir
+        # una ruta delante de la sala, y ahí se termina la demo. Antes los dos
+        # caían en `entrega/` con nombres casi iguales y nada que los
+        # distinguiera.
+        ev["para_abrir_en_una_demo"] = Path(demo["pbit"]).name if demo else None
+        ev["para_conectar_a_los_datos"] = Path(info["pbit"]).name
+        arts = [info["pbit"], info["pbip"]] + ([demo["pbit"], demo["pbip"]] if demo else [])
+        resumen = f".pbit + PBIP · auditoría {info['auditoria']}/100"
+        if demo:
+            resumen += f" · para la demo, abrir {Path(demo['pbit']).name} (trae los datos adentro)"
+        return Resultado("powerbi", True, resumen, ev, arts)
+
+    def _relativo(self, ruta) -> str:
+        """La ruta de un artefacto vista desde la carpeta de salida del proyecto.
+        Si cae fuera (no debería), se devuelve el nombre del archivo solo: nunca
+        la ruta absoluta, que es lo que filtraba el disco de quien corrió."""
+        try:
+            return Path(ruta).resolve().relative_to(self.salida.resolve()).as_posix()
+        except ValueError:
+            return Path(ruta).name
 
     def _entrega(self) -> Resultado:
         self.dirs["entrega"].mkdir(parents=True, exist_ok=True)
@@ -416,12 +437,18 @@ class Pipeline:
                       # salir a internet no se puede auditar después: obliga a
                       # confiar en la memoria de alguien.
                       "confidencial": confidencial.estado(),
-                      "etapas": {e: {"estado": r.estado(), "resumen": r.resumen or r.error, "segundos": r.segundos, "artefactos": r.artefactos}
+                      # Los artefactos, RELATIVOS a la carpeta de salida: el
+                      # manifiesto viaja al cliente y la ruta absoluta llevaba
+                      # adentro el árbol de carpetas y el usuario de la máquina
+                      # que corrió el pipeline. En memoria siguen absolutas,
+                      # que es lo que la app necesita para abrirlos.
+                      "etapas": {e: {"estado": r.estado(), "resumen": r.resumen or r.error, "segundos": r.segundos,
+                                     "artefactos": [self._relativo(a) for a in r.artefactos]}
                                  for e, r in self.resultados.items()}}
         p1 = reporte.guardar_json(self.dirs["entrega"] / "manifiesto.json", manifiesto)
         sello = ("\n> **Modo confidencial ACTIVO.** Esta corrida no pudo sacar datos de la red "
-                 "donde se ejecutó: fuentes por URL, rutas de nube, Kaggle, proveedores de IA y "
-                 "transcripción remota quedaron bloqueados.\n"
+                 "donde se ejecutó: fuentes por URL, rutas de nube, Kaggle y proveedores de IA "
+                 "quedaron bloqueados.\n"
                  if confidencial.activo() else "")
         lineas = [f"# {self.spec['nombre']} · entrega", "", f"Generado {manifiesto['generado']} por MV Data Engineering v{__version__}", sello, "",
                   "| Etapa | Estado | Resumen | s |", "|---|---|---|---|"]
@@ -429,6 +456,14 @@ class Pipeline:
             r = self.resultados.get(e)
             if r and e != "entrega":
                 lineas.append(f"| {e} | {r.estado()} | {(r.resumen or r.error).replace('|', '/')} | {r.segundos} |")
+        pbi = self.resultados.get("powerbi")
+        if pbi and pbi.ok and not pbi.omitida and pbi.evidencia.get("para_abrir_en_una_demo"):
+            lineas += ["", "## Qué abrir", "",
+                       f"- **Para mostrarlo ahora**: `{pbi.evidencia['para_abrir_en_una_demo']}` — trae los datos "
+                       "adentro y abre sin pedir nada.",
+                       f"- **Para conectarlo a los datos de producción**: `{pbi.evidencia['para_conectar_a_los_datos']}` "
+                       "— al abrirlo pide la carpeta de los CSV de gold (parámetro `DataPath`).",
+                       "- El reporte completo, sin Power BI: `reporte.html`."]
         if self.kpis:
             lineas += ["", "## KPIs", "", "| KPI | Valor |", "|---|---|"] + [f"| {k['nombre']} | {k['texto']} |" for k in self.kpis]
         if self.calidad:
@@ -450,7 +485,13 @@ class Pipeline:
                       f"{s['completitud']['declarados']} de {s['completitud']['posibles']} controles declarados"
                       + (f" (faltan: {', '.join(s['completitud']['faltan'])})" if s["completitud"]["faltan"] else ""))
         lineas += ["", f"> {s['nota']}", ""]
-        lineas += ["", "## Artefactos", ""] + [f"- `{a}`" for e, r in self.resultados.items() for a in r.artefactos]
+        # Rutas RELATIVAS a la carpeta de salida. Antes iban absolutas, así que
+        # el documento que se le manda al cliente llevaba la estructura de
+        # carpetas —y el nombre de usuario— de la máquina que corrió el
+        # pipeline. No es sólo prolijidad: es información de la consultora
+        # dentro de un entregable.
+        lineas += ["", "## Artefactos", ""] + [f"- `{self._relativo(a)}`"
+                                               for e, r in self.resultados.items() for a in r.artefactos]
         p2 = self.dirs["entrega"] / "RESUMEN.md"
         p2.write_text("\n".join(lineas) + "\n", encoding="utf-8")
         # Monitoreo de cargas: hasta cuándo llega el dato y cuándo se cargó cada tabla.
