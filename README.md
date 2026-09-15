@@ -38,7 +38,7 @@ falla, las siguientes no corren y la evidencia dice por qué.
 - **Salud:** puntaje por área (datos, calidad, modelo, gobernanza, BI, ML), mejoras sugeridas con parche al YAML que se aplican con un clic, y el antes/después de cada corrida.
 - **Justificación:** para cada etapa, qué se hizo con los números de la corrida, la lectura técnica y la lectura gerencial. Se descarga en Markdown.
 - **Transformaciones:** la bitácora completa de la corrida —cada transformación y característica técnica, en el orden del pipeline— contada tres veces por paso: **técnico** (qué se hizo exactamente), **en criollo** (para un jefe o gerente) e **impacto río abajo** (qué cambia en el modelo, los KPIs o el tablero). Filtro por etapa, vista sólo técnica o sólo criolla, y exportación a **HTML, Word y PDF** (también quedan en `entrega/` en cada corrida).
-- **Demos:** `cobranzas` (financiera sintética), `ventas` (consumo masivo, tres formatos de origen) y `kash` (backtest a ciegas de una financiera: train con 12 meses de pagos y ventana futura + score de la misma fecha, esquema real con `;` y BOM, datos 100 % sintéticos calibrados con estadísticas agregadas).
+- **Demos:** `cobranzas` (financiera sintética), `ventas` (consumo masivo, tres formatos de origen), `kash` (backtest a ciegas de una financiera: train con 12 meses de pagos y ventana futura + score de la misma fecha, esquema real con `;` y BOM, datos 100 % sintéticos calibrados con estadísticas agregadas), `cartera` (cobranzas por estado con proyección segmentada), `conaprole` (cooperativa láctea: remisión, calidad de laboratorio y zafra) y `campanas` (retail con 11 ediciones de 4 campañas, para el análisis de efectividad).
 
 ## Correr
 
@@ -179,6 +179,67 @@ aviso rojo, la bitácora de transformaciones lo registra como paso con aviso y
 decisión no se filtre sin querer a una carpeta de entrega seis meses después,
 cuando ya nadie se acuerda de qué checkpoint corrió.
 
+
+## Efectividad de campañas (`campanas`)
+
+La pregunta que contesta no es «cuánto vendimos en la campaña»: es **¿vendió más, o vendió antes?**
+Para cada **edición** de cada campaña, y por segmento, mide **unidades, precio, rentabilidad y
+stock** contra tres referencias — el baseline previo, la misma campaña en sus **dos ediciones
+anteriores**, y lo que pasó **después**.
+
+Cinco decisiones de método, y cada una existe porque sin ella el número miente:
+
+1. **El control son los SKU que no entraron en la campaña.** El efecto es una diferencia en
+   diferencias contra ellos, no contra el baseline plano. Sin esto la ventana de arrastre de una
+   campaña de noviembre cae en diciembre y la campaña se queda con el crédito de la Navidad:
+   medido en la demo, Black Friday pasaba por «incremental» con +42.640 de margen, y contra el
+   control deja **−40.901**. La guarda es **asimétrica** a propósito: una caída grande del control
+   lo invalida (sólo la campaña puede hundirlo), una suba no (eso es la estación, que es
+   justamente lo que hay que descontar). Cuando el control se descarta, el resultado lo dice.
+2. **La semana previa no es baseline.** El anuncio ya salió y el que puede esperar, espera.
+   `blackout_dias` la deja fuera de las dos ventanas.
+3. **Adelantar no es vender.** El incremental se calcula sobre campaña + arrastre contra el
+   contrafáctico. Una campaña de 7 días con un mes de resaca da incremental **negativo**, y el
+   veredicto dice «adelantó venta que ya iba a ocurrir».
+4. **El veredicto se decide por margen en plata, no por unidades** — y separa el margen que se
+   comió el **descuento** del que se comió la **resaca**, porque la acción es opuesta: en un caso
+   hay que tocar el descuento, en el otro espaciar la campaña.
+5. **El descuento se mide contra el precio de antes, no contra el de lista.** Si el precio subió
+   en el blackout, parte del «30 % off» es fabricado: sale el descuento **real**, el **aparente** y
+   los `puntos_inflados` entre los dos.
+
+Más: un SKU con **quiebre de stock** queda `medicion_censurada` —sus unidades son un piso— y sale
+del like-for-like; la comparación entre ediciones va **por día** (duraciones distintas) y
+**like-for-like** (mismo surtido), y la diferencia entre el total y el LFL es `efecto_mezcla_pp`;
+**RFM** con cortes que se devuelven para poder fijarlos (sin fijarlos, dos corridas no se comparan)
+y el alcance por segmento, que es lo que vuelve *segmentada* a una campaña; y **cohortes** con
+`madura` y `muestra_chica`, porque una cohorte de dos clientes retiene «100 %» por el tamaño.
+
+```yaml
+campanas:
+  sql: "SELECT f.fecha_key, p.sku, c.id_cliente, f.region, f.unidades, f.importe, f.costo
+        FROM gold.fact_venta f JOIN gold.dim_producto p USING (dim_producto_key)
+        JOIN gold.dim_cliente c USING (dim_cliente_key)"
+  fecha: fecha_key · producto: sku · cliente: id_cliente
+  medidas: {unidades: unidades, importe: importe, costo: costo}
+  segmento: [region]
+  calendario: {tabla: campanas, campana: campana, edicion: edicion, desde: desde, hasta: hasta,
+               alcance_tabla: campana_skus, alcance_producto: sku}
+  ventana: {baseline_dias: 28, arrastre_dias: 28, blackout_dias: 7}
+  stock:   {tabla: stock_diario, producto: sku, fecha: fecha, columna: unidades_disponibles}
+  rfm:      {ventana_dias: 365}          # `cortes:` para fijarlos y poder comparar corridas
+  cohortes: {granularidad: mensual, periodos: 6}
+```
+
+Corre dentro de la etapa `reporte` —no agrega una etapa: las 12 son un contrato— y deja nueve
+tablas en gold y en el almacén (`campanas_efecto`, `campanas_vs_edicion`, `campanas_precio`,
+`campanas_stock`, `campanas_rfm`, `campanas_rfm_alcance`, `campanas_cohortes`,
+`campanas_cohortes_origen`, `campanas_panel`), más `campanas.xlsx` con una hoja por tabla. Desde
+ahí las levantan `dax` y `powerbi` sin ningún caso especial.
+
+```bash
+python -m mvde demo campanas ./demo --correr
+```
 
 ## En un servidor (sin instalar nada en las PC)
 

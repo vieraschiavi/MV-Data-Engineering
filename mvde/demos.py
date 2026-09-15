@@ -7,6 +7,9 @@
              calidad de laboratorio, liquidación por sólidos y proyección de
              la zafra. Pensada para mostrarle el producto a una industria
              láctea; los datos NO son de ninguna empresa (ver `_conaprole`).
+  campanas:  retail con 11 ediciones de 4 campañas — efectividad contra el
+             baseline y contra las ediciones anteriores, en unidades, precio,
+             rentabilidad y stock, más RFM y cohortes (ver `demo_campanas`).
 
 `crear(nombre, carpeta)` escribe los CSV y el `proyecto.yaml` listos para
 `python -m mvde correr`. Cada demo ejercita cosas distintas del motor.
@@ -18,9 +21,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import proyecto
+from . import demo_campanas, proyecto
 
-NOMBRES = ["cobranzas", "ventas", "kash", "cartera", "conaprole"]
+NOMBRES = ["cobranzas", "ventas", "kash", "cartera", "conaprole", "campanas"]
 
 
 def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
@@ -763,6 +766,6 @@ def crear(nombre: str, carpeta: Path) -> Path:
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     spec = {"cobranzas": _cobranzas, "ventas": _ventas, "kash": _kash, "cartera": _cartera,
-        "conaprole": _conaprole}[nombre](carpeta)
+        "conaprole": _conaprole, "campanas": demo_campanas.generar}[nombre](carpeta)
     spec = proyecto.normalizar(spec)
     return proyecto.guardar(spec, carpeta / "proyecto.yaml")
