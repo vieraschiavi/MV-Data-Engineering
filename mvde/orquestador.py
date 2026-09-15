@@ -26,7 +26,7 @@ import pandas as pd
 
 from . import ETAPAS, __version__
 from . import confidencial  # noqa: E402
-from . import almacen, bronze, calidad, dax, frescura, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyeccion, proyecto, reporte, salud, silver, transformaciones
+from . import almacen, bronze, calidad, campanas, dax, frescura, fuentes, gobernanza, gold, justificacion, ml, powerbi, proyeccion, proyecto, reporte, salud, silver, transformaciones
 
 log = logging.getLogger("mvde")
 OPCIONALES = {"ml", "powerbi"}
@@ -58,6 +58,7 @@ class Pipeline:
         self.tablas: dict[str, pd.DataFrame] = {}
         self.silver: dict[str, pd.DataFrame] = {}
         self.gold: dict[str, pd.DataFrame] = {}
+        self.campanas: dict = {}
         self.procedencia: dict[str, dict] = {}
         self.calidad: dict = {}
         self.kpis: list[dict] = []
@@ -368,6 +369,7 @@ class Pipeline:
             # (y la pestaña Salud sugiere dejarlos escritos en el YAML).
             self.spec["kpis"] = reporte.kpis_automaticos(self.gold)
             self.spec["_kpis_automaticos"] = True
+        camp = self._campanas()
         self.kpis = reporte.calcular_kpis(self.spec, self.ruta_db)
         malos = [k for k in self.kpis if not k["ok"]]
         if malos and len(malos) == len(self.kpis) and self.kpis:
@@ -377,8 +379,52 @@ class Pipeline:
         p_x = reporte.excel(self.dirs["reporte"] / "reporte.xlsx", self.spec, self.kpis, self.calidad, self.catalogo, self.gold, self.ml)
         p_h = reporte.html_reporte(self.dirs["reporte"] / "reporte.html", self.spec, self.kpis, self.calidad, imgs, self.ml, self.spec.get("idioma", "es"))
         ev = {"kpis": [{"nombre": k["nombre"], "valor": k["texto"], **({"error": k["error"]} if not k["ok"] else {})} for k in self.kpis], "graficos": [p.name for p in imgs]}
-        return Resultado("reporte", True, f"{len(self.kpis) - len(malos)}/{len(self.kpis)} KPIs · {len(imgs)} gráficos · Excel + HTML", ev,
-                         [str(p_k), str(p_x), str(p_h)] + [str(p) for p in imgs])
+        resumen = f"{len(self.kpis) - len(malos)}/{len(self.kpis)} KPIs · {len(imgs)} gráficos · Excel + HTML"
+        if camp:
+            ev["campanas"] = self.campanas.get("resumen", {})
+            r = self.campanas["resumen"]
+            resumen += (f" · campañas: {r['ediciones']} ediciones de {r['campanas']}"
+                        + (f", {len(r['alertas'])} alerta(s)" if r["alertas"] else ""))
+        return Resultado("reporte", True, resumen, ev,
+                         [str(p_k), str(p_x), str(p_h)] + [str(p) for p in imgs] + camp)
+
+    def _campanas(self) -> list[str]:
+        """Efectividad de campañas (opcional, sólo si el YAML declara `campanas`).
+
+        Corre dentro de `reporte` —que es la etapa de análisis— y no como una
+        etapa nueva: las 12 etapas son un contrato del producto y este análisis
+        no agrega un paso al pipeline, agrega una lectura sobre gold.
+
+        Las tablas entran a `self.gold` y al almacén igual que la proyección de
+        series: así `dax` les genera medidas y `powerbi` las publica sin ningún
+        caso especial."""
+        cfg = self.spec.get("campanas")
+        if not cfg:
+            return []
+        df = self._tabla_ml(cfg, "sql", "tabla")
+        if df is None:
+            raise RuntimeError("`campanas` necesita `tabla` o `sql`")
+        # El calendario, el alcance y el stock se buscan en gold y en silver:
+        # son tablas del proyecto, no archivos aparte.
+        disponibles = {**self.silver, **self.gold}
+        self.campanas = campanas.correr(df, cfg, disponibles)
+        tablas = {k: v for k, v in self.campanas["tablas"].items() if v is not None and len(v)}
+        arts = []
+        for nombre, tabla in tablas.items():
+            self.gold[nombre] = tabla
+            for carpeta in (self.dirs["gold"], self.dirs["reporte"]):
+                tabla.to_parquet(carpeta / f"{nombre}.parquet", index=False)
+            arts.append(str(self.dirs["reporte"] / f"{nombre}.parquet"))
+        if tablas:
+            almacen.cargar(tablas, self.ruta_db)
+        arts.append(str(reporte.guardar_json(self.dirs["reporte"] / "campanas.json", self.campanas["resumen"])))
+        px = self.dirs["reporte"] / "campanas.xlsx"
+        with pd.ExcelWriter(px, engine="xlsxwriter") as w:
+            for nombre, tabla in tablas.items():
+                # Excel corta los nombres de hoja en 31 caracteres.
+                tabla.to_excel(w, sheet_name=nombre.replace("campanas_", "")[:31], index=False)
+        arts.append(str(px))
+        return arts
 
     def _dax(self) -> Resultado:
         self.dirs["powerbi"].mkdir(parents=True, exist_ok=True)
