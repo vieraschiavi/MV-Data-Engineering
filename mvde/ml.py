@@ -75,25 +75,47 @@ def _huella(df: pd.DataFrame) -> np.ndarray:
     feature— le cambia el hash a todas las filas y reparte otro holdout, con
     otra tasa base. Dos corridas con distinta lista de columnas no son
     comparables, y la diferencia de AUC entre ellas no dice si el cambio sirvió.
-    Para medir el efecto de sacar una feature hay que fijar el corte una vez y
-    reusarlo; queda anotado en `notas` de cada corrida."""
+    Para eso está `id` en el bloque `ml`: si el proyecto lo declara, `_cortes`
+    reparte por esa clave y la huella de contenido no participa, con lo cual el
+    holdout son los mismos registros antes y después del cambio. Sin `id` no
+    hay forma, y cada corrida lo deja anotado en `notas`."""
     texto = df.astype(str).agg("\x1f".join, axis=1)
     return np.array([int(hashlib.blake2b(t.encode(), digest_size=8).hexdigest(), 16) for t in texto])
 
 
 def _cortes(df: pd.DataFrame, cfg: dict, notas: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    huella = _huella(df)
+    # Si el proyecto declaró `id`, el corte se reparte por ESA columna y no por
+    # la fila entera. Es la diferencia entre poder comparar dos corridas y no
+    # poder: con la huella de contenido, agregar una feature le cambia el hash
+    # a todas las filas y reparte otro holdout, así que la corrida de antes y
+    # la de después miden modelos distintos sobre poblaciones distintas y la
+    # diferencia de AUC no dice si el cambio sirvió. Con la clave declarada, el
+    # holdout son los MISMOS registros antes y después.
+    #
+    # Lo pagamos en carne propia acá: al agregar una feature buena a la demo
+    # `cobranzas` el puntaje de ml BAJÓ de 64,4 a 62,4, y no porque el modelo
+    # fuera peor —AUC 0,7249 → 0,7419 y lift 2,77 → 3,93— sino porque el
+    # holdout era otro y la brecha selección→holdout de ese reparte en
+    # particular daba 0,0572 en vez de 0,0077. Sobre un corte fijo, la misma
+    # feature da una brecha de 0,0004.
+    clave = cfg.get("id") if cfg.get("id") in df.columns else None
+    huella = _huella(df[[clave]]) if clave else _huella(df)
     if cfg.get("fecha") and cfg["fecha"] in df.columns:
         fechas = pd.to_datetime(df[cfg["fecha"]]).values
         # lexsort ordena por la ÚLTIMA clave primero: fecha manda, la huella
         # desempata. Así el corte es el mismo venga el set de donde venga.
         orden = np.lexsort((huella, fechas))
         notas.append(f"corte temporal por {cfg['fecha']}: entreno con el pasado, selecciono y mido con el futuro")
+    elif clave:
+        orden = np.argsort(huella, kind="stable")
+        notas.append(f"sin columna de fecha: corte por «{clave}» (el mismo holdout aunque cambie la "
+                     "lista de columnas, así que dos corridas con distintas features SÍ se comparan)")
     else:
         orden = np.argsort(huella, kind="stable")
-        notas.append("sin columna de fecha: corte por huella de contenido (reproducible entre corridas "
-                     "del MISMO set; agregar o quitar una columna reparte otro holdout, así que dos "
-                     "corridas con distinta lista de columnas no se comparan entre sí)")
+        notas.append("sin columna de fecha ni `id` declarado: corte por huella de contenido "
+                     "(reproducible entre corridas del MISMO set; agregar o quitar una columna "
+                     "reparte otro holdout, así que dos corridas con distinta lista de columnas no "
+                     "se comparan entre sí — declarar `id` en el bloque `ml` lo arregla)")
     n = len(df)
     a, b = int(n * 0.6), int(n * 0.8)
     return orden[:a], orden[a:b], orden[b:]
