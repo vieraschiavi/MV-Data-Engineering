@@ -135,13 +135,63 @@ def _cobranzas(carpeta: Path, n_clientes: int = 4000, seed: int = 42) -> dict:
         # riesgo. Un atributo protegido que ni siquiera predice es lo peor de
         # los dos mundos. `sexo` sigue en la dimensión y en el tablero, donde
         # describir la cartera es legítimo; lo que no entra es la DECISIÓN.
-        "ml": {"sql": "SELECT r.default_proximo_mes, d.edad, d.educacion, d.sucursal, d.limite_credito, "
+        # `atraso_ult_mes` es el atraso del ÚLTIMO mes cerrado, y es la feature que
+        # más aporta. Faltaba: la consulta miraba el trimestre
+        # (`atraso_ult_trim`, el máximo de octubre a diciembre), y el máximo del
+        # trimestre no es el estado actual — un cliente que estuvo 2 meses
+        # atrasado en octubre y se puso al día en diciembre entra como «2», igual
+        # que uno que sigue atrasado hoy. Medido en los datos: el atraso del
+        # último mes correlaciona 0,4513 con el default y el máximo del trimestre
+        # 0,3481.
+        #
+        # No es fuga: el target es si NO paga la cuota del mes SIGUIENTE, y el
+        # estado del último mes cerrado es exactamente lo que tiene sobre la mesa
+        # quien decide a quién llamar. Es la variable central de cualquier
+        # modelo de cobranzas, y acá estaba entrando en una versión desafilada.
+        #
+        # Medido con el corte fijado una vez sobre `id_cliente` (fijarlo es
+        # obligatorio: la huella de contenido reparte otro holdout en cuanto
+        # cambia la lista de columnas, ver `ml._huella`):
+        #
+        #   consulta de antes                       AUC holdout 0,7391 · lift 2,92
+        #   + atraso del último mes                 AUC holdout 0,7629 · lift 3,45
+        #   + último mes y el mes previo            AUC holdout 0,7608 · lift 3,51
+        #   + los dos y el % pagado del trimestre   AUC holdout 0,7543 · lift 3,57
+        #
+        # Entra UNA feature y no las cuatro: de la segunda fila para abajo el
+        # lift sigue subiendo pero el AUC de holdout BAJA y la brecha
+        # selección→holdout se abre de 0,0004 a 0,0109. Eso es el conjunto de
+        # selección eligiendo ruido, y es el error que este motor está hecho
+        # para no cometer.
+        #
+        # El mes se resuelve con `MAX(fecha_key)` y no con una fecha escrita a
+        # mano: así la feature sigue siendo «el último mes cerrado» si mañana la
+        # demo genera otro rango. `atraso_ult_trim` queda con su fecha fija
+        # porque cambiarlo cambiaría lo que mide, y con eso la medición de arriba.
+        # Y agrupa por `id_cliente`. Sin él, el GROUP BY era por (default, edad,
+        # educación, sucursal, límite) y eso FUSIONA clientes distintos que
+        # comparten esos cinco valores: 4.000 clientes entraban al modelo como
+        # 3.812 filas, y en 188 de ellas los agregados eran de dos personas
+        # mezcladas —la suma de meses en mora de las dos, el máximo de atraso
+        # del par—. El modelo entrenaba con filas que no corresponden a ningún
+        # cliente real. Es exactamente la falla silenciosa que este programa se
+        # vende para evitar, y estaba en la consulta de su propia demo.
+        #
+        # Declarar `id` hace además que el corte 60/20/20 se reparta por cliente
+        # (ver `ml._cortes`): el holdout son los mismos clientes antes y después
+        # de tocar las features, que es la única forma de que un «mejoró» sea
+        # verificable. Y el listado scoreado sale con el id adentro, que es lo
+        # que hace falta para llamar a alguien.
+        "ml": {"sql": "SELECT r.default_proximo_mes, d.id_cliente, d.edad, d.educacion, d.sucursal, d.limite_credito, "
                       "SUM(CASE WHEN f.en_mora THEN 1 ELSE 0 END) meses_en_mora, MAX(f.meses_atraso) max_atraso, "
                       "SUM(f.monto_pagado)/NULLIF(SUM(f.monto_cuota),0) pct_pagado, "
-                      "MAX(CASE WHEN f.fecha_key >= 20251001 THEN f.meses_atraso ELSE 0 END) atraso_ult_trim "
+                      "MAX(CASE WHEN f.fecha_key >= 20251001 THEN f.meses_atraso ELSE 0 END) atraso_ult_trim, "
+                      "MAX(CASE WHEN f.fecha_key = (SELECT MAX(fecha_key) FROM gold.fact_cuota) "
+                      "THEN f.meses_atraso ELSE 0 END) atraso_ult_mes "
                       "FROM gold.fact_cliente_riesgo r JOIN gold.dim_cliente d USING (dim_cliente_key) "
-                      "JOIN gold.fact_cuota f USING (dim_cliente_key) GROUP BY 1,2,3,4,5",
+                      "JOIN gold.fact_cuota f USING (dim_cliente_key) GROUP BY 1,2,3,4,5,6",
                "target": "default_proximo_mes", "tipo": "clasificacion",
+               "id": "id_cliente",
                "excluir": ["sexo"]},
         # El maestro de clientes se refresca todos los días; las cuotas son mensuales.
         "frescura": {"cada": "diaria", "tablas": {"cuotas": {"cada": "mensual"}, "fact_cuota": {"cada": "mensual"}}},

@@ -171,3 +171,88 @@ def test_los_modelos_lineales_van_escalados_y_su_importancia_no_sale_vacia(tmp_p
     p = _corrida(tmp_path)
     if "logística" in p.ml["modelo"]:
         assert p.ml["importancia"], "ganó el lineal y la importancia salió vacía"
+
+
+# ---------------------------------------------------------------------------
+# El corte y la fila: dos cosas que hacían que «mejoró» no fuera verificable.
+# ---------------------------------------------------------------------------
+
+def _set(n=600, extra=False, seed=7):
+    import numpy as np
+    import pandas as pd
+    rng = np.random.default_rng(seed)
+    d = pd.DataFrame({"id_cliente": np.arange(1, n + 1),
+                      "x": rng.normal(size=n),
+                      "y": rng.integers(0, 2, n)})
+    if extra:                                  # una feature más, como en la vida real
+        d["z"] = rng.normal(size=n)
+    return d
+
+
+def test_con_id_declarado_agregar_una_columna_no_reparte_otro_holdout():
+    """La propiedad sin la cual ningún «el cambio mejoró el modelo» es verificable.
+
+    Con el corte por huella de contenido, agregar una feature le cambia el hash
+    a todas las filas: la corrida de antes y la de después miden sobre
+    poblaciones distintas, y la diferencia de AUC no dice si el cambio sirvió.
+    Pasó en la demo `cobranzas`: una feature buena BAJÓ el puntaje de 64,4 a
+    62,4 porque el reparte nuevo daba una brecha selección→holdout de 0,0572
+    contra 0,0077, y la brecha descuenta. Sobre un corte fijo la misma feature
+    da 0,0004 y el puntaje sube a 81,2.
+    """
+    cfg = {"target": "y", "tipo": "clasificacion", "id": "id_cliente"}
+    a = ml._cortes(_set(), cfg, [])
+    b = ml._cortes(_set(extra=True), cfg, [])
+    for i, (x, z) in enumerate(zip(a, b)):
+        assert set(_set()["id_cliente"].values[x]) == set(_set(extra=True)["id_cliente"].values[z]), \
+            f"el tramo {i} cambió de integrantes al agregar una columna"
+
+
+def test_sin_id_declarado_el_corte_avisa_que_no_se_puede_comparar():
+    """Si no hay clave, el corte sigue siendo por contenido — y la corrida lo
+    dice, en vez de dejar que alguien compare dos números que no se comparan."""
+    notas: list[str] = []
+    ml._cortes(_set(), {"target": "y", "tipo": "clasificacion"}, notas)
+    dicho = " ".join(notas).lower()
+    assert "huella de contenido" in dicho
+    assert "no" in dicho and "comparan" in dicho
+    assert "`id`" in dicho or "id`" in dicho, "no dice cómo arreglarlo"
+
+
+def test_el_corte_por_id_queda_por_escrito_en_la_corrida():
+    notas: list[str] = []
+    ml._cortes(_set(), {"target": "y", "tipo": "clasificacion", "id": "id_cliente"}, notas)
+    assert "id_cliente" in " ".join(notas)
+
+
+def test_el_set_de_ml_de_cobranzas_tiene_una_fila_por_cliente(tmp_path):
+    """Una fila que es el promedio de dos personas no es de nadie.
+
+    El GROUP BY de la consulta era por (default, edad, educación, sucursal,
+    límite) y fusionaba clientes que compartían esos cinco valores: 4.000
+    clientes entraban al modelo como 3.812 filas, con los agregados de 188
+    pares mezclados. Corría verde y nadie se enteraba.
+    """
+    p = Pipeline.desde_yaml(demos.crear("cobranzas", tmp_path))
+    p.correr(hasta="entrega")
+    clientes = len(p.gold["dim_cliente"][p.gold["dim_cliente"]["is_current"]])
+    partes = p.ml["filas_train"] + p.ml["filas_seleccion"] + p.ml["filas_holdout"]
+    assert partes == clientes, f"{clientes} clientes entraron al modelo como {partes} filas"
+    assert p.ml["filas_scoreadas"] == clientes
+
+
+def test_el_modelo_de_cobranzas_ve_el_atraso_del_ultimo_mes_cerrado(tmp_path):
+    """Es la variable central de una cobranza y entraba en versión desafilada.
+
+    La consulta miraba el máximo del trimestre: un cliente que estuvo 2 meses
+    atrasado en octubre y se puso al día en diciembre entraba igual que uno que
+    sigue atrasado hoy. Correlación con el default: 0,4513 el último mes contra
+    0,3481 el máximo del trimestre. No es fuga — el target es la cuota del mes
+    SIGUIENTE y el último mes cerrado es lo que hay sobre la mesa al decidir a
+    quién llamar.
+    """
+    p = Pipeline.desde_yaml(demos.crear("cobranzas", tmp_path))
+    p.correr(hasta="entrega")
+    assert "atraso_ult_mes" in p.ml["features"]
+    assert p.ml["metricas"]["auc"] >= 0.74, p.ml["metricas"]
+    assert p.ml["metricas"]["lift_decil10"] >= 3.0, p.ml["metricas"]

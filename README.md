@@ -84,6 +84,18 @@ powerbi: {generar: true, nombre: Cobranzas}
 Las dos demos (`mvde/demos.py`) son el YAML completo de referencia: datos 100 %
 sintéticos con defectos inyectados a propósito para que el gate tenga algo que decir.
 
+> **`id` en el bloque `ml` no es decoración.** Es la clave por la que se reparte
+> el corte 60/20/20, y de eso depende que dos corridas se puedan comparar: sin
+> `id` (y sin `fecha`) el corte sale de una huella del contenido de la fila, así
+> que agregar o quitar una columna reparte otro holdout y otra tasa base, y la
+> diferencia de AUC entre la corrida de antes y la de después no dice si el
+> cambio sirvió. Lo pagamos en la demo `cobranzas`: al agregar una feature buena
+> el puntaje de ML **bajó** de 64,4 a 62,4 —no por el modelo (AUC 0,7249 →
+> 0,7419, lift 2,77 → 3,93) sino porque en ese reparte la brecha
+> selección→holdout daba 0,0572 en vez de 0,0077, y la brecha descuenta—; con el
+> corte por `id_cliente` la misma feature lo sube a **81,2**. Cada corrida deja
+> escrito en `notas` con qué columna se cortó.
+
 ## Proyección de series (`ml.tipo: serie`)
 
 La etapa ML tiene dos caminos. El tabular (clasificación/regresión, corte 60/20/20)
