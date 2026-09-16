@@ -47,7 +47,7 @@ if TYPE_CHECKING:                # sólo para la anotación de _placa
     from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from narracion import CLAVES, GUION, IDIOMAS  # noqa: E402
+from narracion import CIFRAS_CARTERA, CLAVES, GUION, IDIOMAS, cifra  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parents[2]
 AUDIO = Path(__file__).resolve().parent / "audio"
@@ -59,6 +59,15 @@ TINTA, TINTA2, LINEA = (11, 27, 52), (18, 39, 68), (29, 53, 87)
 TEXTO, TEXTO2, ACENTO = (232, 238, 247), (157, 176, 204), (240, 180, 41)
 RESPIRO = 0.7          # segundos de aire después de que termina la locución
 SIN_VOZ_CPS = 15.0     # caracteres por segundo, para estimar sin MP3
+
+def _titulo_salud(idioma: str) -> str:
+    """«98,3 medido · 4 áreas» — el número que el video muestra en pantalla."""
+    n = cifra(idioma, CIFRAS_CARTERA["medido"])
+    areas = CIFRAS_CARTERA["areas_medidas"]
+    return {"es": f"{n} medido · {areas} áreas",
+            "en": f"{n} measured · {areas} areas",
+            "pt": f"{n} medido · {areas} áreas"}[idioma]
+
 
 # Guion visual: por escena, el título de la placa y la captura que la acompaña.
 # La clave es la misma que en narracion.GUION, y así la voz y la imagen no se
@@ -79,7 +88,11 @@ ESCENAS = {
         ("demo_calidad",    {"es": "El gate de calidad", "en": "The quality gate", "pt": "O gate de qualidade"}, "4_transformaciones"),
         ("demo_proyeccion", {"es": "Backtest de origen móvil", "en": "Rolling-origin backtest", "pt": "Backtest de origem móvel"}, "proyeccion"),
         ("demo_banda",      {"es": "La banda es medida", "en": "The band is measured", "pt": "A faixa é medida"}, "proyeccion"),
-        ("demo_salud",      {"es": "98,9 / 100", "en": "98.9 / 100", "pt": "98,9 / 100"}, "2_salud"),
+        # El puntaje va en la PLACA y no en la voz, y sale de `CIFRAS_CARTERA`:
+        # es lo MEDIDO, no el total que el propio motor desaconseja presentar
+        # (el por qué está en `narracion.CIFRAS_CARTERA`). Cambia la fórmula,
+        # cambia una constante y se re-renderiza la placa; los MP3 no se tocan.
+        ("demo_salud",      {i: _titulo_salud(i) for i in IDIOMAS}, "2_salud"),
         ("demo_cierre",     {"es": "De la fuente al tablero", "en": "From source to dashboard", "pt": "Da fonte ao painel"}, "5_relevamiento"),
     ],
 }

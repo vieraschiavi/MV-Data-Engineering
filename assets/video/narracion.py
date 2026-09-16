@@ -58,6 +58,49 @@ VOCES_EDGE = {
 # Apenas más lento que el default: a -8% no se oye «pausado», se oye ARRASTRADO.
 RITMO_EDGE = "-2%"
 
+# Las cifras que el video CITA de la demo `cartera`, en un solo lugar.
+#
+# Acá había un problema de honestidad, no de formato. La locución decía
+# «noventa y ocho coma nueve sobre cien, con las seis áreas por encima de
+# nueve», y los dos números estaban mal, cada uno a su manera:
+#
+#   · 98,9 es el `total` de `salud.evaluar()`, y el motor dice POR ESCRITO, en
+#     la nota que acompaña a cada corrida, que ese total «sirve para saber qué
+#     falta configurar, no para presentarlo como métrica de calidad»: promedia
+#     cuatro áreas medidas contra los datos con dos que sólo verifican que el
+#     YAML esté completo. Vender en un video el número que el propio programa
+#     desaconseja usar es el problema que el programa denuncia.
+#   · «por encima de nueve» quedó de una época en que las áreas iban de 0 a 10.
+#     Hoy van de 0 a 100 y la más baja de la demo da 96, así que la frase no
+#     decía nada: todo está «por encima de nueve».
+#
+# Ahora el número vive en la PLACA, que se re-renderiza gratis, y la voz dice
+# qué ES el número, que es lo que no cambia cuando cambia la fórmula. Si el
+# puntaje volviera al guion hablado, cada cambio de fórmula obligaría a
+# regrabar los tres MP3 — y mientras no se regraben, el video miente con voz
+# propia.
+#
+# `tests/test_video.py` corre la demo `cartera` y falla si alguna de estas
+# cifras dejó de ser la que devuelve el motor. Así, de una fórmula que se
+# mueve se entera el CI y no el cliente en la mitad del video.
+CIFRAS_CARTERA = {
+    "medido": 98.3,          # salud.evaluar()["medido"]["puntaje"]
+    "areas_medidas": 4,      # salud.evaluar()["medido"]["areas"]
+    "declarados": 2,         # salud.evaluar()["completitud"]["declarados"]
+    "posibles": 2,           # salud.evaluar()["completitud"]["posibles"]
+}
+
+
+def cifra(idioma: str, valor: float) -> str:
+    """98.3 → «98,3» en español y portugués, «98.3» en inglés.
+
+    La placa se arma con esto: un «98.3» en la versión española se lee como un
+    error de la herramienta, no como un decimal.
+    """
+    txt = f"{valor:.1f}"
+    return txt if idioma == "en" else txt.replace(".", ",")
+
+
 # El guion HABLADO. No es el texto de la placa: en pantalla va un título corto
 # y acá va la frase que se escucha. Las claves son las mismas que usa
 # `build_video.py`, y un test verifica que no falte ninguna en ningún idioma.
@@ -96,9 +139,11 @@ GUION: dict[str, dict[str, str]] = {
                            "proyecta con eso y el informe lo dice.",
         "demo_banda": "La banda de desvío no es una fórmula: son los errores que ESE modelo "
                       "tuvo, paso por paso del horizonte. Por eso se puede planificar con ella.",
-        "demo_salud": "Noventa y ocho coma nueve sobre cien, con las seis áreas por encima de "
-                      "nueve. Y el mismo comando sobre los mismos datos da siempre el mismo "
-                      "número.",
+        "demo_salud": "Lo que el motor MIDE son las reglas de calidad que pasaron, el backtest "
+                      "del modelo y la auditoría del archivo de Power BI. Qué tan completa está "
+                      "la declaración se cuenta aparte: no se promedia con lo medido. Es una "
+                      "autoevaluación y el informe lo dice con esas palabras. Y el mismo comando "
+                      "sobre los mismos datos da siempre el mismo número.",
         "demo_cierre": "De la fuente al tablero de Power BI, con la evidencia de cada paso.",
     },
     "en": {
@@ -135,9 +180,11 @@ GUION: dict[str, dict[str, str]] = {
                            "says so.",
         "demo_banda": "The deviation band isn't a formula: it's the errors THAT model made, "
                       "step by step across the horizon. That's why you can plan with it.",
-        "demo_salud": "Ninety-eight point nine out of a hundred, with all six areas above "
-                      "nine. And the same command over the same data always returns the same "
-                      "number.",
+        "demo_salud": "What the engine MEASURES is the quality rules that passed, the model "
+                      "backtest and the audit of the Power BI file. How complete the declaration "
+                      "is gets counted separately: it is never averaged into what was measured. "
+                      "It is a self-assessment and the report says so in those words. And the "
+                      "same command over the same data always returns the same number.",
         "demo_cierre": "From the source to the Power BI dashboard, with evidence for every step.",
     },
     "pt": {
@@ -171,8 +218,11 @@ GUION: dict[str, dict[str, str]] = {
                            "isso e o relatório diz.",
         "demo_banda": "A faixa de desvio não é uma fórmula: são os erros que AQUELE modelo "
                       "teve, passo a passo do horizonte. Por isso dá para planejar com ela.",
-        "demo_salud": "Noventa e oito vírgula nove em cem, com as seis áreas acima de nove. E "
-                      "o mesmo comando sobre os mesmos dados dá sempre o mesmo número.",
+        "demo_salud": "O que o motor MEDE são as regras de qualidade que passaram, o backtest "
+                      "do modelo e a auditoria do arquivo do Power BI. Quão completa está a "
+                      "declaração conta-se à parte: não se mistura com o medido. É uma "
+                      "autoavaliação e o relatório diz isso com essas palavras. E o mesmo "
+                      "comando sobre os mesmos dados dá sempre o mesmo número.",
         "demo_cierre": "Da fonte ao painel do Power BI, com a evidência de cada passo.",
     },
 }
