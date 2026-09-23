@@ -9,3 +9,6 @@ salidas/
 demo_mvde/
 *.duckdb
 *.parquet
+# Herramientas de Claude Code (skills del equipo): no son producto y no
+# tienen por qué viajar en la imagen que se le entrega al cliente.
+.claude/

@@ -24,6 +24,16 @@ exclude = [
     "runtime",          # el Python embebido que arma packaging/preparar_runtime.ps1
     "node_modules",
     "__pycache__",
+    # `.claude/` es herramienta de trabajo de Claude Code, no producto: no viaja
+    # en el instalador (lista blanca de `packaging/preparar_runtime.ps1`) ni en
+    # la imagen (`.dockerignore`). Adentro está el skill `all-in-one-tech-team`
+    # copiado BYTE A BYTE de su fuente, porque su propio procedimiento de
+    # actualización es «reemplazar la carpeta» — y una copia retocada para pasar
+    # este linter volvería a romperlo en la primera actualización. Sus motores
+    # del módulo 17 están escritos en estilo compacto y dan 60 hallazgos
+    # (E701/E702/E401/E402/F401), ninguno de ellos un error de ejecución: sus
+    # `--demo` corren limpios. Decisión tomada al instalarlo, no por comodidad.
+    ".claude",
 ]
 
 [lint]
