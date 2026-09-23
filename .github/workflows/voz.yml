@@ -14,6 +14,18 @@ on:
         required: false
         default: ""
 
+# Sólo lee el repo y sube un artefacto: no pushea nada. Sin este bloque el
+# token heredaba el default del repositorio en vez del mínimo.
+permissions:
+  contents: read
+
+# El idioma va en la clave a propósito: dos disparos de «es» seguidos se
+# pisan (el viejo ya no sirve), pero «es» y «en» en paralelo son trabajos
+# distintos y ninguno tiene por qué cancelar al otro.
+concurrency:
+  group: voz-${{ github.ref }}-${{ inputs.idioma }}
+  cancel-in-progress: true
+
 jobs:
   voz:
     runs-on: ubuntu-latest
@@ -32,11 +44,17 @@ jobs:
         # locución, el video sale mudo en el medio de una escena.
         run: python assets/video/narracion.py --listar > /dev/null
 
+      # `idioma` es texto libre: va por `env:` y no interpolado en `run:`, donde
+      # un «es; <comando>» corría el comando antes de que argparse lo viera.
       - name: Generar la locución
-        run: python assets/video/narracion.py ${{ inputs.idioma && format('--idioma {0}', inputs.idioma) || '' }}
+        env:
+          IDIOMA: ${{ inputs.idioma }}
+        run: python assets/video/narracion.py ${IDIOMA:+--idioma "$IDIOMA"}
 
       - name: Montar los videos
-        run: python assets/video/build_video.py ${{ inputs.idioma && format('--idioma {0}', inputs.idioma) || '' }}
+        env:
+          IDIOMA: ${{ inputs.idioma }}
+        run: python assets/video/build_video.py ${IDIOMA:+--idioma "$IDIOMA"}
 
       - name: Comprobar que quedaron CON voz
         # Un MP4 sin pista de audio es el modo de fallar callado de este
